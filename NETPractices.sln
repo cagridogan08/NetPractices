@@ -1,0 +1,44 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.12.35707.178
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "01.Web", "01.Web", "{C200AD3D-67CD-46C5-A62B-BE89E1971E09}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SOAP", "SOAP", "{FFF6FB61-63FF-462F-A34E-6124B33CA270}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Api", "NETPractices\WEB\SOAP\Api\Api.csproj", "{BE6BC236-648D-429F-883F-74580195CADA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SoapClinentApp", "NETPractices\WEB\SOAP\SoapClinentApp\SoapClinentApp.csproj", "{2798FE76-0384-4EB1-AD40-4059DAF03466}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ModelLibrary", "NETPractices\WEB\SOAP\ModelLibrary\ModelLibrary.csproj", "{06C44BC1-9B75-47C1-912E-C4D3D6A61872}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{BE6BC236-648D-429F-883F-74580195CADA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BE6BC236-648D-429F-883F-74580195CADA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BE6BC236-648D-429F-883F-74580195CADA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BE6BC236-648D-429F-883F-74580195CADA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2798FE76-0384-4EB1-AD40-4059DAF03466}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2798FE76-0384-4EB1-AD40-4059DAF03466}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2798FE76-0384-4EB1-AD40-4059DAF03466}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2798FE76-0384-4EB1-AD40-4059DAF03466}.Release|Any CPU.Build.0 = Release|Any CPU
+		{06C44BC1-9B75-47C1-912E-C4D3D6A61872}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{06C44BC1-9B75-47C1-912E-C4D3D6A61872}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{06C44BC1-9B75-47C1-912E-C4D3D6A61872}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{06C44BC1-9B75-47C1-912E-C4D3D6A61872}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{FFF6FB61-63FF-462F-A34E-6124B33CA270} = {C200AD3D-67CD-46C5-A62B-BE89E1971E09}
+		{BE6BC236-648D-429F-883F-74580195CADA} = {FFF6FB61-63FF-462F-A34E-6124B33CA270}
+		{2798FE76-0384-4EB1-AD40-4059DAF03466} = {FFF6FB61-63FF-462F-A34E-6124B33CA270}
+		{06C44BC1-9B75-47C1-912E-C4D3D6A61872} = {FFF6FB61-63FF-462F-A34E-6124B33CA270}
+	EndGlobalSection
+EndGlobal
