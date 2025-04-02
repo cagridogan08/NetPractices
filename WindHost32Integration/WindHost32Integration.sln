@@ -1,0 +1,37 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.13.35806.99
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WindHost32Integration", "WindHost32Integration\WindHost32Integration.csproj", "{6FC5D52D-C263-4F6F-96A9-34BA28A30EE6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HostedApp", "HostedApp\HostedApp.csproj", "{B1EFDC06-5541-4188-98A2-8A70A86989C7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RosylnPadTest", "RosylnPadTest\RosylnPadTest.csproj", "{C916BC47-FDD6-4DFE-9888-BCF28A357C06}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6FC5D52D-C263-4F6F-96A9-34BA28A30EE6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6FC5D52D-C263-4F6F-96A9-34BA28A30EE6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6FC5D52D-C263-4F6F-96A9-34BA28A30EE6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6FC5D52D-C263-4F6F-96A9-34BA28A30EE6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B1EFDC06-5541-4188-98A2-8A70A86989C7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B1EFDC06-5541-4188-98A2-8A70A86989C7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B1EFDC06-5541-4188-98A2-8A70A86989C7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B1EFDC06-5541-4188-98A2-8A70A86989C7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C916BC47-FDD6-4DFE-9888-BCF28A357C06}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C916BC47-FDD6-4DFE-9888-BCF28A357C06}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C916BC47-FDD6-4DFE-9888-BCF28A357C06}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C916BC47-FDD6-4DFE-9888-BCF28A357C06}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {E836413E-34E3-4BB4-8E91-25ED46A4F8A3}
+	EndGlobalSection
+EndGlobal

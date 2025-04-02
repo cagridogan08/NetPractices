@@ -8,40 +8,39 @@ using System.Threading.Tasks;
 using ModelLibrary;
 using ModelLibrary.Models;
 
-namespace SoapClinentApp.ViewModels
+namespace SoapClinentApp.ViewModels;
+
+internal class UsersViewModel : BaseViewModel
 {
-    internal class UsersViewModel : BaseViewModel
+    private readonly IUserService _userService;
+
+    public UsersViewModel()
     {
-        private readonly IUserService _userService;
-
-        public UsersViewModel()
+        var binding = new BasicHttpBinding
         {
-            var binding = new BasicHttpBinding
+            Security =
             {
-                Security =
-                {
-                    Mode = BasicHttpSecurityMode.None // No security for local testing
-                }
-            };
-            var endpoint = new EndpointAddress("http://localhost:5273/UserService.asmx");
+                Mode = BasicHttpSecurityMode.None // No security for local testing
+            }
+        };
+        var endpoint = new EndpointAddress("http://localhost:5273/UserService.asmx");
 
-            var factory = new ChannelFactory<IUserService>(binding, endpoint);
+        var factory = new ChannelFactory<IUserService>(binding, endpoint);
 
-            // Create a proxy to communicate with the SOAP service
-            _userService = factory.CreateChannel();
-            _users = new(_userService.GetUsers());
-        }
-
-        #region Properties
-
-        private ObservableCollection<User> _users;
-
-        public ObservableCollection<User> Users
-        {
-            get => _users;
-            set => SetField(ref _users, value);
-        }
-
-        #endregion
+        // Create a proxy to communicate with the SOAP service
+        _userService = factory.CreateChannel();
+        _users = new(_userService.GetUsers());
     }
+
+    #region Properties
+
+    private ObservableCollection<User> _users;
+
+    public ObservableCollection<User> Users
+    {
+        get => _users;
+        set => SetField(ref _users, value);
+    }
+
+    #endregion
 }
