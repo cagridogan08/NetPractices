@@ -1,36 +1,54 @@
 ﻿using System.Collections.Concurrent;
-using System.IO.Pipes;
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 
-namespace Messaging.ModelLibrary;
+namespace Messaging.ModelLibrary.Tcp;
 
-public class NamedPipeTransport : IMessageTransport
+public class TcpTransport : IMessageTransport
 {
-    private readonly string _pipeName;
-    private readonly ConcurrentDictionary<string, ClientConnection> _connections = new();
-    private CancellationTokenSource _cancellationTokenSource;
-    private Task _serverTask;
+    #region Fields
+
+    private readonly ConcurrentDictionary<string, TcpClientConnection> _connections = new();
+    private TcpListener? _listener;
+    private CancellationTokenSource? _cancellationTokenSource;
+    private Task? _serverTask;
     private bool _disposed;
 
-    public NamedPipeTransport(string pipeName = "GenericMessagingApp")
-    {
-        _pipeName = pipeName;
-    }
+    #endregion
 
-    public event EventHandler<MessageEventArgs> MessageReceived;
-    public event EventHandler<ConnectionEventArgs> ClientConnected;
-    public event EventHandler<ConnectionEventArgs> ClientDisconnected;
-    public event EventHandler<ErrorEventArgs> ErrorOccurred;
+    #region Events
+
+
+    public event EventHandler<MessageEventArgs>? MessageReceived;
+    public event EventHandler<ConnectionEventArgs>? ClientConnected;
+    public event EventHandler<ConnectionEventArgs>? ClientDisconnected;
+    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
+
+    #endregion
+
+    #region Properties
 
     public bool IsRunning { get; private set; }
-    public TransportType TransportType => TransportType.NamedPipe;
+    public TransportType TransportType => TransportType.Tcp;
     public IReadOnlyList<ConnectionInfo> Connections => _connections.Values.Select(c => c.Info).ToList();
+
+    #endregion
+
+    #region Methods
 
     public async Task<bool> StartAsync(Dictionary<string, object> configuration = null)
     {
         try
         {
             await StopAsync();
+
+            var host = configuration?.GetValueOrDefault("Host", "localhost") as string ?? "localhost";
+            var port = configuration?.GetValueOrDefault("Port", 8080) as int? ?? 8080;
+
+            var ipAddress = host == "localhost" ? IPAddress.Loopback : IPAddress.Parse(host);
+            _listener = new TcpListener(ipAddress, port);
+            _listener.Start();
 
             _cancellationTokenSource = new CancellationTokenSource();
             _serverTask = Task.Run(RunServerAsync, _cancellationTokenSource.Token);
@@ -40,7 +58,7 @@ public class NamedPipeTransport : IMessageTransport
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to start named pipe server: {ex.Message}", ex));
+            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to start TCP server: {ex.Message}", ex));
             return false;
         }
     }
@@ -65,6 +83,15 @@ public class NamedPipeTransport : IMessageTransport
                     // Ignore server task exceptions during shutdown
                 }
                 _serverTask = null;
+            }
+
+            try
+            {
+                _listener?.Stop();
+            }
+            catch (Exception)
+            {
+                // Ignore listener stop errors
             }
 
             // Dispose all connections
@@ -129,26 +156,18 @@ public class NamedPipeTransport : IMessageTransport
     {
         while (!_cancellationTokenSource.Token.IsCancellationRequested)
         {
-            NamedPipeServerStream pipeServer = null;
             try
             {
-                pipeServer = new NamedPipeServerStream(
-                    _pipeName,
-                    PipeDirection.InOut,
-                    NamedPipeServerStream.MaxAllowedServerInstances,
-                    PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
-
-                await pipeServer.WaitForConnectionAsync(_cancellationTokenSource.Token);
+                var tcpClient = await _listener.AcceptTcpClientAsync();
 
                 var connectionInfo = new ConnectionInfo
                 {
                     Id = Guid.NewGuid().ToString(),
                     Name = "Unknown",
-                    Address = _pipeName
+                    Address = tcpClient.Client.RemoteEndPoint?.ToString() ?? "Unknown"
                 };
 
-                var clientConnection = new ClientConnection(pipeServer, connectionInfo, _cancellationTokenSource.Token);
+                var clientConnection = new TcpClientConnection(tcpClient, connectionInfo, _cancellationTokenSource.Token);
                 clientConnection.MessageReceived += OnClientMessageReceived;
                 clientConnection.Disconnected += OnClientDisconnected;
                 clientConnection.ErrorOccurred += OnClientErrorOccurred;
@@ -157,9 +176,11 @@ public class NamedPipeTransport : IMessageTransport
                 ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
 
                 clientConnection.StartReading();
-
-                // Don't dispose the pipe here - let ClientConnection manage it
-                pipeServer = null;
+            }
+            catch (ObjectDisposedException)
+            {
+                // Listener was disposed - this is expected during shutdown
+                break;
             }
             catch (OperationCanceledException)
             {
@@ -167,8 +188,10 @@ public class NamedPipeTransport : IMessageTransport
             }
             catch (Exception ex)
             {
-                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Server error: {ex.Message}", ex));
-                pipeServer?.Dispose();
+                if (!_cancellationTokenSource.Token.IsCancellationRequested)
+                {
+                    ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Server error: {ex.Message}", ex));
+                }
             }
         }
     }
@@ -176,7 +199,7 @@ public class NamedPipeTransport : IMessageTransport
     private void OnClientMessageReceived(object sender, MessageEventArgs e)
     {
         // Update connection name if this is the first message
-        if (sender is ClientConnection connection && connection.Info.Name == "Unknown")
+        if (sender is TcpClientConnection connection && connection.Info.Name == "Unknown")
         {
             connection.Info.Name = e.Message.Sender;
         }
@@ -211,17 +234,22 @@ public class NamedPipeTransport : IMessageTransport
             }
         }
     }
+    #endregion
 
-    private class ClientConnection : IDisposable
+    #region TcpClientConnection
+
+    private class TcpClientConnection : IDisposable
     {
-        private readonly NamedPipeServerStream _pipe;
+        private readonly TcpClient _tcpClient;
+        private readonly NetworkStream _stream;
         private readonly CancellationToken _cancellationToken;
         private Task _readTask;
         private bool _disposed;
 
-        public ClientConnection(NamedPipeServerStream pipe, ConnectionInfo info, CancellationToken cancellationToken)
+        public TcpClientConnection(TcpClient tcpClient, ConnectionInfo info, CancellationToken cancellationToken)
         {
-            _pipe = pipe;
+            _tcpClient = tcpClient;
+            _stream = tcpClient.GetStream();
             Info = info;
             _cancellationToken = cancellationToken;
         }
@@ -241,13 +269,14 @@ public class NamedPipeTransport : IMessageTransport
         {
             try
             {
-                if (_disposed || !_pipe.IsConnected)
+                if (_disposed || !_tcpClient.Connected)
                     return false;
 
                 var json = JsonSerializer.Serialize(message);
-                using var writer = new StreamWriter(_pipe, leaveOpen: true);
-                await writer.WriteLineAsync(json);
-                await writer.FlushAsync();
+                var data = System.Text.Encoding.UTF8.GetBytes(json + "\n");
+
+                await _stream.WriteAsync(data, _cancellationToken);
+                await _stream.FlushAsync();
                 return true;
             }
             catch (ObjectDisposedException)
@@ -269,18 +298,20 @@ public class NamedPipeTransport : IMessageTransport
         {
             try
             {
-                using var reader = new StreamReader(_pipe, leaveOpen: true);
-                string json;
+                using var reader = new StreamReader(_stream, System.Text.Encoding.UTF8, leaveOpen: true);
 
                 while (!_cancellationToken.IsCancellationRequested &&
                        !_disposed &&
-                       _pipe.IsConnected &&
-                       (json = await reader.ReadLineAsync()) != null)
+                       _tcpClient.Connected &&
+                       await reader.ReadLineAsync() is { } json)
                 {
                     try
                     {
-                        var message = JsonSerializer.Deserialize<Message>(json);
-                        MessageReceived?.Invoke(this, new MessageEventArgs(message, Info));
+                        if (!string.IsNullOrWhiteSpace(json))
+                        {
+                            var message = JsonSerializer.Deserialize<Message>(json);
+                            MessageReceived?.Invoke(this, new MessageEventArgs(message, Info));
+                        }
                     }
                     catch (JsonException ex)
                     {
@@ -290,11 +321,11 @@ public class NamedPipeTransport : IMessageTransport
             }
             catch (ObjectDisposedException)
             {
-                // Pipe was disposed - this is expected during shutdown
+                // Stream was disposed - this is expected during shutdown
             }
             catch (InvalidOperationException)
             {
-                // Pipe is closed - this is expected during disconnect
+                // Stream is closed - this is expected during disconnect
             }
             catch (OperationCanceledException)
             {
@@ -324,8 +355,18 @@ public class NamedPipeTransport : IMessageTransport
 
                 try
                 {
-                    _pipe?.Close();
-                    _pipe?.Dispose();
+                    _stream?.Close();
+                    _tcpClient?.Close();
+                }
+                catch (Exception)
+                {
+                    // Ignore disposal errors
+                }
+
+                try
+                {
+                    _stream?.Dispose();
+                    _tcpClient?.Dispose();
                 }
                 catch (Exception)
                 {
@@ -343,4 +384,7 @@ public class NamedPipeTransport : IMessageTransport
             }
         }
     }
+
+
+    #endregion
 }

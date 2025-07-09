@@ -1,23 +1,26 @@
-﻿using System.IO.Pipes;
+﻿
+
+using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 
-namespace Messaging.ModelLibrary;
+namespace Messaging.ModelLibrary.WebSocket;
 
-public class NamedPipeClient : IMessageClient
+public class WebSocketMessageClient : IMessageClient
 {
-    private NamedPipeClientStream _pipeClient;
-    private Task _readTask;
+    private ClientWebSocket? _webSocket;
+    private Task? _readTask;
     private CancellationTokenSource _cancellationTokenSource;
     private bool _disposed;
 
-    public event EventHandler<MessageEventArgs> MessageReceived;
-    public event EventHandler<ConnectionEventArgs> Connected;
-    public event EventHandler<ConnectionEventArgs> Disconnected;
-    public event EventHandler<ErrorEventArgs> ErrorOccurred;
+    public event EventHandler<MessageEventArgs>? MessageReceived;
+    public event EventHandler<ConnectionEventArgs>? Connected;
+    public event EventHandler<ConnectionEventArgs>? Disconnected;
+    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
-    public bool IsConnected => _pipeClient?.IsConnected == true;
+    public bool IsConnected => _webSocket?.State == WebSocketState.Open;
     public ConnectionInfo ConnectionInfo { get; private set; }
-    public TransportType TransportType => TransportType.NamedPipe;
+    public TransportType TransportType => TransportType.WebSocket;
 
     public async Task<bool> ConnectAsync(Dictionary<string, object> configuration)
     {
@@ -25,25 +28,31 @@ public class NamedPipeClient : IMessageClient
         {
             await DisconnectAsync();
 
-            var serverName = configuration?.GetValueOrDefault("ServerName", ".") as string ?? ".";
-            var pipeName = configuration?.GetValueOrDefault("PipeName", "GenericMessagingApp") as string ?? "GenericMessagingApp";
+            var host = configuration?.GetValueOrDefault("Host", "localhost") as string ?? "localhost";
+            var port = configuration?.GetValueOrDefault("Port", 8080) as int? ?? 8080;
+            var path = configuration?.GetValueOrDefault("Path", "/") as string ?? "/";
+            var useSSL = configuration?.GetValueOrDefault("UseSSL", false) as bool? ?? false;
             var timeout = configuration?.GetValueOrDefault("Timeout", 5000) as int? ?? 5000;
             var clientName = configuration?.GetValueOrDefault("ClientName", Environment.UserName) as string ?? Environment.UserName;
 
-            _cancellationTokenSource = new CancellationTokenSource();
-            _pipeClient = new NamedPipeClientStream(
-                serverName,
-                pipeName,
-                PipeDirection.InOut,
-                PipeOptions.Asynchronous);
+            var protocol = useSSL ? "wss" : "ws";
+            var uri = new Uri($"{protocol}://{host}:{port}{path}");
 
-            await _pipeClient.ConnectAsync(timeout);
+            _webSocket = new ClientWebSocket();
+            _cancellationTokenSource = new CancellationTokenSource();
+
+            // Set timeout for connection
+            using var timeoutCts = new CancellationTokenSource(timeout);
+            using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                _cancellationTokenSource.Token, timeoutCts.Token);
+
+            await _webSocket.ConnectAsync(uri, combinedCts.Token);
 
             ConnectionInfo = new ConnectionInfo
             {
                 Id = Guid.NewGuid().ToString(),
                 Name = clientName,
-                Address = $"{serverName}\\{pipeName}"
+                Address = uri.ToString()
             };
 
             _readTask = Task.Run(ReadMessagesAsync, _cancellationTokenSource.Token);
@@ -64,6 +73,18 @@ public class NamedPipeClient : IMessageClient
         {
             _cancellationTokenSource?.Cancel();
 
+            if (_webSocket?.State == WebSocketState.Open)
+            {
+                try
+                {
+                    await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnecting", CancellationToken.None);
+                }
+                catch (Exception)
+                {
+                    // Ignore close errors
+                }
+            }
+
             if (_readTask != null)
             {
                 try
@@ -80,17 +101,8 @@ public class NamedPipeClient : IMessageClient
                 _readTask = null;
             }
 
-            try
-            {
-                _pipeClient?.Close();
-            }
-            catch (Exception)
-            {
-                // Ignore close errors
-            }
-
-            _pipeClient?.Dispose();
-            _pipeClient = null;
+            _webSocket?.Dispose();
+            _webSocket = null;
 
             if (ConnectionInfo != null)
             {
@@ -111,9 +123,10 @@ public class NamedPipeClient : IMessageClient
             if (!IsConnected || _disposed) return false;
 
             var json = JsonSerializer.Serialize(message);
-            using var writer = new StreamWriter(_pipeClient, leaveOpen: true);
-            await writer.WriteLineAsync(json);
-            await writer.FlushAsync();
+            var buffer = Encoding.UTF8.GetBytes(json);
+            var segment = new ArraySegment<byte>(buffer);
+
+            await _webSocket.SendAsync(segment, WebSocketMessageType.Text, true, _cancellationTokenSource.Token);
             return true;
         }
         catch (ObjectDisposedException)
@@ -121,6 +134,10 @@ public class NamedPipeClient : IMessageClient
             return false;
         }
         catch (InvalidOperationException)
+        {
+            return false;
+        }
+        catch (WebSocketException)
         {
             return false;
         }
@@ -133,33 +150,46 @@ public class NamedPipeClient : IMessageClient
 
     private async Task ReadMessagesAsync()
     {
+        var buffer = new byte[4096];
+
         try
         {
-            using var reader = new StreamReader(_pipeClient, leaveOpen: true);
-
             while (!_cancellationTokenSource.Token.IsCancellationRequested &&
                    !_disposed &&
-                   _pipeClient.IsConnected &&
-                   await reader.ReadLineAsync() is { } json)
+                   IsConnected)
             {
-                try
+                var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cancellationTokenSource.Token);
+
+                if (result.MessageType == WebSocketMessageType.Text)
                 {
-                    var message = JsonSerializer.Deserialize<Message>(json);
-                    MessageReceived?.Invoke(this, new MessageEventArgs(message, ConnectionInfo));
+                    var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
+
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(json))
+                        {
+                            var message = JsonSerializer.Deserialize<Message>(json);
+                            MessageReceived?.Invoke(this, new MessageEventArgs(message, ConnectionInfo));
+                        }
+                    }
+                    catch (JsonException ex)
+                    {
+                        ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex, ConnectionInfo));
+                    }
                 }
-                catch (JsonException ex)
+                else if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex, ConnectionInfo));
+                    break;
                 }
             }
         }
         catch (ObjectDisposedException)
         {
-            // Pipe was disposed - this is expected during shutdown
+            // WebSocket was disposed - this is expected during shutdown
         }
-        catch (InvalidOperationException)
+        catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
         {
-            // Pipe is closed - this is expected during disconnect
+            // Connection was closed - this is expected during disconnect
         }
         catch (OperationCanceledException)
         {

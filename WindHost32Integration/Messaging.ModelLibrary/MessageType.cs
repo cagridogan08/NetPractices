@@ -4,6 +4,7 @@ public enum MessageType
 {
     Text,
     Error,
+    Handshake,
     LaunchRequest,
     LaunchResponse,
     StatusRequest,

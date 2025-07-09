@@ -130,7 +130,7 @@ public class MessagingService : IMessagingService
                 }
                 else
                 {
-                    var connection = Connections.FirstOrDefault(c => c.Name == message.Receiver);
+                    var connection = Connections.FirstOrDefault(c => c.Id.Equals(message.Receiver));
                     return await _transport.SendMessageAsync(message, connection?.Id);
                 }
             }

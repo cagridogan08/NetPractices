@@ -1,4 +1,5 @@
-﻿using ErrorEventArgs = Messaging.ModelLibrary.ErrorEventArgs;
+﻿using System.Text.Json;
+using ErrorEventArgs = Messaging.ModelLibrary.ErrorEventArgs;
 
 namespace Messaging.ModelLibrary;
 
@@ -14,6 +15,7 @@ public interface IMessageClient : IDisposable
     TransportType TransportType { get; }
 
     Task<bool> ConnectAsync(Dictionary<string, object> configuration);
+
     Task DisconnectAsync();
     Task<bool> SendMessageAsync(Message message);
 }

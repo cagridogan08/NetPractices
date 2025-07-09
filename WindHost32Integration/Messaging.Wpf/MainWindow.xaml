@@ -2,39 +2,33 @@
     x:Class="Messaging.Wpf.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:local="clr-namespace:Messaging.Wpf"
-    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    Title="MainWindow"
+    Title="Multi-Transport Messaging App"
     Width="800"
-    Height="450"
-    mc:Ignorable="d">
+    Height="600">
     <Window.DataContext>
         <local:MainViewModel />
     </Window.DataContext>
-
-    <Grid Margin="10">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <local:BooleanInverterConverter x:Key="BooleanInverter" />
+    </Window.Resources>
+    <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="2*" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
 
-        <!--  Connection Panel  -->
-        <Border
+        <!--  Transport Configuration Panel  -->
+        <GroupBox
             Grid.Row="0"
-            Grid.ColumnSpan="2"
-            Margin="0,0,0,10"
-            Padding="10"
-            BorderBrush="LightGray"
-            BorderThickness="1">
+            Margin="5"
+            Header="Transport Configuration">
             <Grid>
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
@@ -42,233 +36,283 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
+                <!--  Transport Type Selection  -->
                 <Label
                     Grid.Row="0"
                     Grid.Column="0"
                     VerticalAlignment="Center"
-                    Content="Name:" />
-                <TextBox
+                    Content="Transport Type:" />
+                <ComboBox
                     Grid.Row="0"
                     Grid.Column="1"
-                    MinWidth="100"
-                    Margin="5,0"
-                    VerticalAlignment="Center"
-                    Text="{Binding ClientName}" />
+                    Margin="5"
+                    IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                    ItemsSource="{Binding TransportTypes}"
+                    SelectedValue="{Binding SelectedTransportType}" />
 
-                <Button
+                <Label
                     Grid.Row="0"
                     Grid.Column="2"
-                    Margin="5,0"
+                    VerticalAlignment="Center"
+                    Content="Client Name:" />
+                <TextBox
+                    Grid.Row="0"
+                    Grid.Column="3"
+                    Margin="5"
+                    IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                    Text="{Binding ClientName}" />
+
+                <!--  Named Pipe Configuration  -->
+                <StackPanel
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Grid.ColumnSpan="4"
+                    Margin="5"
+                    Orientation="Horizontal"
+                    Visibility="{Binding IsNamedPipeSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Label VerticalAlignment="Center" Content="Pipe Name:" />
+                    <TextBox
+                        Width="200"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding PipeName}" />
+                    <Label VerticalAlignment="Center" Content="Server Name:" />
+                    <TextBox
+                        Width="100"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding ServerName}" />
+                </StackPanel>
+
+                <!--  TCP Configuration  -->
+                <StackPanel
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Grid.ColumnSpan="4"
+                    Margin="5"
+                    Orientation="Horizontal"
+                    Visibility="{Binding IsTcpSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Label VerticalAlignment="Center" Content="Host:" />
+                    <TextBox
+                        Width="150"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding TcpHost}" />
+                    <Label VerticalAlignment="Center" Content="Port:" />
+                    <TextBox
+                        Width="80"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding TcpPort}" />
+                </StackPanel>
+
+                <!--  UDP Configuration  -->
+                <StackPanel
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Grid.ColumnSpan="4"
+                    Margin="5"
+                    Orientation="Horizontal"
+                    Visibility="{Binding IsUdpSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Label VerticalAlignment="Center" Content="Host:" />
+                    <TextBox
+                        Width="150"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding UdpHost}" />
+                    <Label VerticalAlignment="Center" Content="Port:" />
+                    <TextBox
+                        Width="80"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding UdpPort}" />
+                    <Label VerticalAlignment="Center" Content="Local Port:" />
+                    <TextBox
+                        Width="80"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding UdpLocalPort}" />
+                </StackPanel>
+
+                <!--  WebSocket Configuration  -->
+                <StackPanel
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Grid.ColumnSpan="4"
+                    Margin="5"
+                    Orientation="Horizontal"
+                    Visibility="{Binding IsWebSocketSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Label VerticalAlignment="Center" Content="Host:" />
+                    <TextBox
+                        Width="150"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding WebSocketHost}" />
+                    <Label VerticalAlignment="Center" Content="Port:" />
+                    <TextBox
+                        Width="80"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding WebSocketPort}" />
+                    <Label VerticalAlignment="Center" Content="Path:" />
+                    <TextBox
+                        Width="100"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding WebSocketPath}" />
+                    <CheckBox
+                        Margin="5"
+                        VerticalAlignment="Center"
+                        Content="Use SSL"
+                        IsChecked="{Binding WebSocketUseSSL}"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}" />
+                </StackPanel>
+
+                <!--  InMemory Configuration  -->
+                <StackPanel
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Grid.ColumnSpan="4"
+                    Margin="5"
+                    Orientation="Horizontal"
+                    Visibility="{Binding IsInMemorySelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Label VerticalAlignment="Center" Content="Server Name:" />
+                    <TextBox
+                        Width="200"
+                        Margin="5"
+                        IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                        Text="{Binding InMemoryServerName}" />
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+
+        <!--  Connection Control Panel  -->
+        <GroupBox
+            Grid.Row="1"
+            Margin="5"
+            Header="Connection Control">
+            <StackPanel Margin="5" Orientation="Horizontal">
+                <Button
+                    Margin="5"
+                    Padding="10,5"
+                    Command="{Binding ConnectCommand}"
+                    Content="Connect as Client" />
+                <Button
+                    Margin="5"
                     Padding="10,5"
                     Command="{Binding StartServerCommand}"
                     Content="Start Server" />
                 <Button
-                    Grid.Row="0"
-                    Grid.Column="3"
-                    Margin="5,0"
-                    Padding="10,5"
-                    Command="{Binding ConnectCommand}"
-                    Content="Connect" />
-                <Button
-                    Grid.Row="0"
-                    Grid.Column="4"
-                    Margin="5,0"
+                    Margin="5"
                     Padding="10,5"
                     Command="{Binding DisconnectCommand}"
-                    Content="Disconnect" />
+                    Content="Disconnect/Stop" />
                 <Button
-                    Grid.Row="0"
-                    Grid.Column="5"
-                    Margin="5,0"
+                    Margin="5"
                     Padding="10,5"
                     Command="{Binding ClearMessagesCommand}"
-                    Content="Clear" />
-
-                <Label
-                    Grid.Row="1"
-                    Grid.Column="0"
+                    Content="Clear Messages" />
+                <TextBlock
+                    Margin="10,0"
                     VerticalAlignment="Center"
-                    Content="Pipe Name:" />
-                <TextBox
-                    Grid.Row="1"
-                    Grid.Column="1"
-                    Grid.ColumnSpan="5"
-                    Margin="5,5,5,0"
-                    VerticalAlignment="Center"
-                    Text="{Binding PipeName}" />
-            </Grid>
-        </Border>
+                    FontWeight="Bold"
+                    Text="{Binding StatusText}" />
+            </StackPanel>
+        </GroupBox>
 
-        <!--  Messages Panel  -->
-        <Border
-            Grid.Row="1"
-            Grid.Column="0"
-            Margin="0,0,5,10"
-            BorderBrush="LightGray"
-            BorderThickness="1">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
+        <!--  Messages and Connections Panel  -->
+        <Grid Grid.Row="2" Margin="5">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="200" />
+            </Grid.ColumnDefinitions>
 
-                <Border
-                    Grid.Row="0"
-                    Padding="5"
-                    Background="LightBlue">
-                    <TextBlock FontWeight="Bold" Text="{Binding StatusText}" />
-                </Border>
+            <!--  Messages  -->
+            <GroupBox
+                Grid.Column="0"
+                Margin="0,0,5,0"
+                Header="Messages">
+                <ListView ItemsSource="{Binding Messages}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Border
+                                Margin="2"
+                                Padding="5"
+                                BorderBrush="LightGray"
+                                BorderThickness="1"
+                                CornerRadius="3">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Type}" Value="Error">
+                                                <Setter Property="Background" Value="LightCoral" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Type}" Value="System">
+                                                <Setter Property="Background" Value="LightYellow" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock FontWeight="Bold" Text="{Binding Sender}" />
+                                    <TextBlock Text="{Binding Content}" TextWrapping="Wrap" />
+                                    <TextBlock
+                                        HorizontalAlignment="Right"
+                                        FontSize="10"
+                                        Foreground="Gray"
+                                        Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </GroupBox>
 
-                <ScrollViewer
-                    Grid.Row="1"
-                    Padding="5"
-                    VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding Messages}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border
-                                    Margin="0,2"
-                                    Padding="5"
-                                    BorderBrush="LightGray"
-                                    BorderThickness="1"
-                                    CornerRadius="3">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Type}" Value="Error">
-                                                    <Setter Property="Background" Value="LightCoral" />
-                                                </DataTrigger>
-                                                <DataTrigger Binding="{Binding Type}" Value="System">
-                                                    <Setter Property="Background" Value="LightYellow" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
+            <!--  Connections  -->
+            <GroupBox Grid.Column="1" Header="Connections">
+                <ListView ItemsSource="{Binding Connections}" SelectedItem="{Binding SelectedConnectionInfo}">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="2">
+                                <TextBlock FontWeight="Bold" Text="{Binding Name}" />
+                                <TextBlock
+                                    FontSize="10"
+                                    Foreground="Gray"
+                                    Text="{Binding Address}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </GroupBox>
+        </Grid>
 
-                                    <Grid>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="*" />
-                                        </Grid.RowDefinitions>
-
-                                        <StackPanel
-                                            Grid.Row="0"
-                                            Margin="0,0,0,3"
-                                            Orientation="Horizontal">
-                                            <TextBlock
-                                                Margin="0,0,5,0"
-                                                FontWeight="Bold"
-                                                Text="{Binding Sender}" />
-                                            <TextBlock
-                                                FontSize="10"
-                                                Foreground="Gray"
-                                                Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}" />
-                                        </StackPanel>
-
-                                        <TextBlock
-                                            Grid.Row="1"
-                                            Text="{Binding Content}"
-                                            TextWrapping="Wrap" />
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
-            </Grid>
-        </Border>
-
-        <!--  Connections Panel  -->
-        <Border
-            Grid.Row="1"
-            Grid.Column="1"
-            Margin="0,0,0,10"
-            BorderBrush="LightGray"
-            BorderThickness="1">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-
-                <Border
-                    Grid.Row="0"
-                    Padding="5"
-                    Background="LightGreen">
-                    <TextBlock FontWeight="Bold" Text="Connected Clients" />
-                </Border>
-
-                <ScrollViewer
-                    Grid.Row="1"
-                    Padding="5"
-                    VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding Connections}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border
-                                    Margin="0,2"
-                                    Padding="5"
-                                    Background="LightCyan"
-                                    BorderBrush="LightGray"
-                                    BorderThickness="1"
-                                    CornerRadius="3">
-                                    <Grid>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
-
-                                        <TextBlock
-                                            Grid.Row="0"
-                                            FontWeight="Bold"
-                                            Text="{Binding Name}" />
-                                        <TextBlock
-                                            Grid.Row="1"
-                                            FontSize="10"
-                                            Foreground="Gray"
-                                            Text="{Binding ConnectedAt, StringFormat='{}{0:HH:mm:ss}'}" />
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
-            </Grid>
-        </Border>
-
-        <!--  Message Input  -->
-        <Border
-            Grid.Row="2"
-            Grid.ColumnSpan="2"
-            Padding="5"
-            BorderBrush="LightGray"
-            BorderThickness="1">
+        <!--  Message Input Panel  -->
+        <GroupBox
+            Grid.Row="3"
+            Margin="5"
+            Header="Send Message">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-
                 <TextBox
+                    x:Name="MessageTextBox"
                     Grid.Column="0"
-                    MaxHeight="100"
-                    AcceptsReturn="True"
+                    Margin="5"
+                    IsEnabled="{Binding IsConnected}"
                     KeyDown="MessageTextBox_KeyDown"
-                    Text="{Binding MessageText, UpdateSourceTrigger=PropertyChanged}"
-                    VerticalScrollBarVisibility="Auto" />
+                    Text="{Binding MessageText, UpdateSourceTrigger=PropertyChanged}" />
                 <Button
                     Grid.Column="1"
-                    MinWidth="60"
-                    Margin="5,0,0,0"
+                    Margin="5"
                     Padding="15,5"
                     Command="{Binding SendMessageCommand}"
                     Content="Send" />
             </Grid>
-        </Border>
+        </GroupBox>
     </Grid>
 </Window>
