@@ -1,0 +1,152 @@
+﻿<Window
+    x:Class="ProjectExporter.VersionConflictWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Version Conflict"
+    Width="600"
+    Height="500"
+    ShowInTaskbar="False"
+    WindowStartupLocation="CenterOwner">
+
+    <Grid Margin="30">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!--  Header  -->
+        <Border
+            Grid.Row="0"
+            Margin="0,0,0,20"
+            Padding="15"
+            Background="#FFF3E0"
+            BorderBrush="#FF9800"
+            BorderThickness="1"
+            CornerRadius="4">
+            <StackPanel>
+                <TextBlock
+                    FontSize="18"
+                    FontWeight="Bold"
+                    Foreground="#E65100"
+                    Text="⚠️ Version Conflict Detected" />
+                <TextBlock
+                    x:Name="ConflictMessageText"
+                    Margin="0,5,0,0"
+                    FontSize="12"
+                    Foreground="#BF360C"
+                    Text="A project with this version already exists" />
+            </StackPanel>
+        </Border>
+
+        <!--  Existing Project Info  -->
+        <GroupBox
+            Grid.Row="1"
+            Margin="0,0,0,20"
+            Header="Existing Project">
+            <Grid Margin="15">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0">
+                    <TextBlock
+                        Margin="0,0,0,5"
+                        FontWeight="Bold"
+                        Text="Project Details:" />
+                    <TextBlock x:Name="ExistingProjectName" Text="Name: -" />
+                    <TextBlock x:Name="ExistingProjectVersion" Text="Version: -" />
+                    <TextBlock x:Name="ExistingProjectSize" Text="Size: -" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1">
+                    <TextBlock
+                        Margin="0,0,0,5"
+                        FontWeight="Bold"
+                        Text="Timestamps:" />
+                    <TextBlock x:Name="ExistingProjectCreated" Text="Created: -" />
+                    <TextBlock x:Name="ExistingProjectModified" Text="Modified: -" />
+                    <TextBlock x:Name="ExistingProjectCreatedBy" Text="Created By: -" />
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+
+        <!--  Resolution Options  -->
+        <GroupBox
+            Grid.Row="2"
+            Margin="0,0,0,20"
+            Header="Choose Resolution">
+            <StackPanel Margin="15">
+                <RadioButton
+                    x:Name="OverrideRadioButton"
+                    Margin="0,5"
+                    Content="🔄 Override existing version"
+                    FontWeight="Bold"
+                    Foreground="#D32F2F" />
+                <TextBlock
+                    Margin="20,0,0,10"
+                    FontStyle="Italic"
+                    Foreground="Gray"
+                    Text="This will replace the existing project with your new upload" />
+
+                <RadioButton
+                    x:Name="UseNewVersionRadioButton"
+                    Margin="0,5"
+                    Content="📋 Use a different version"
+                    FontWeight="Bold"
+                    Foreground="#1976D2"
+                    IsChecked="True" />
+                <TextBlock
+                    Margin="20,0,0,5"
+                    FontStyle="Italic"
+                    Foreground="Gray"
+                    Text="Select or enter a new version number" />
+
+                <ComboBox
+                    x:Name="VersionSuggestionsComboBox"
+                    Margin="20,0,0,10"
+                    IsEditable="True"
+                    IsEnabled="True"
+                    SelectionChanged="VersionSuggestionsComboBox_SelectionChanged" />
+            </StackPanel>
+        </GroupBox>
+
+        <!--  Preview  -->
+        <GroupBox Grid.Row="3" Header="Action Preview">
+            <ScrollViewer Margin="15">
+                <TextBlock
+                    x:Name="ActionPreviewText"
+                    FontStyle="Italic"
+                    Text="Select an option above to see the preview"
+                    TextWrapping="Wrap" />
+            </ScrollViewer>
+        </GroupBox>
+
+        <!--  Buttons  -->
+        <StackPanel
+            Grid.Row="4"
+            Margin="0,20,0,0"
+            HorizontalAlignment="Right"
+            Orientation="Horizontal">
+            <Button
+                x:Name="ProceedButton"
+                Margin="5"
+                Padding="20,10"
+                Background="#4CAF50"
+                BorderThickness="0"
+                Click="ProceedButton_Click"
+                Content="✅ Proceed"
+                Foreground="White"
+                IsDefault="True" />
+            <Button
+                Margin="5"
+                Padding="20,10"
+                Click="CancelButton_Click"
+                Content="❌ Cancel"
+                IsCancel="True" />
+        </StackPanel>
+    </Grid>
+</Window>

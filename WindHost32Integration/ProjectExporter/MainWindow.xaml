@@ -1,0 +1,822 @@
+﻿<Window
+    x:Class="ProjectExporter.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Title="Project Exporter Runner Manager"
+    Width="1200"
+    Height="800"
+    WindowStartupLocation="CenterScreen"
+    mc:Ignorable="d">
+
+    <Window.InputBindings>
+        <KeyBinding Key="F5" Command="{Binding RefreshCommand}" />
+        <KeyBinding Key="F12" Command="{Binding SettingsCommand}" />
+        <KeyBinding
+            Key="U"
+            Command="{Binding UploadCommand}"
+            Modifiers="Ctrl" />
+        <KeyBinding
+            Key="R"
+            Command="{Binding RefreshCommand}"
+            Modifiers="Ctrl" />
+    </Window.InputBindings>
+
+    <Window.Resources>
+        <Style x:Key="ModernButton" TargetType="Button">
+            <Setter Property="Background" Value="#2196F3" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="15,8" />
+            <Setter Property="Margin" Value="5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#1976D2" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#0D47A1" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style
+            x:Key="DangerButton"
+            BasedOn="{StaticResource ModernButton}"
+            TargetType="Button">
+            <Setter Property="Background" Value="#F44336" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#D32F2F" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style
+            x:Key="SuccessButton"
+            BasedOn="{StaticResource ModernButton}"
+            TargetType="Button">
+            <Setter Property="Background" Value="#4CAF50" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#388E3C" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!--  Header  -->
+        <Border
+            Grid.Row="0"
+            Padding="20,15"
+            Background="#1976D2">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <TextBlock
+                        Margin="0,0,10,0"
+                        FontSize="24"
+                        Text="📁" />
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        FontSize="20"
+                        FontWeight="Bold"
+                        Foreground="White"
+                        Text="Project ExporterRunner Manager" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button
+                        x:Name="SettingsButton"
+                        Margin="0,0,10,0"
+                        Click="SettingsButton_Click"f
+                        Content="⚙️"
+                        FontSize="16"
+                        Style="{StaticResource ModernButton}"
+                        ToolTip="Server Settings (F12)" />
+                    <TextBlock
+                        Margin="0,0,5,0"
+                        VerticalAlignment="Center"
+                        Foreground="White"
+                        Text="Server:" />
+                    <ComboBox
+                        x:Name="ServerComboBox"
+                        Width="200"
+                        Margin="0,0,10,0"
+                        VerticalAlignment="Center"
+                        IsEditable="True"
+                        KeyDown="ServerComboBox_KeyDown"
+                        SelectionChanged="ServerComboBox_SelectionChanged"
+                        ToolTip="Enter server URL or select from list">
+                        <ComboBox.Items>
+                            <ComboBoxItem Content="https://localhost:7001/api" />
+                            <ComboBoxItem Content="http://localhost:5000/api" />
+                            <ComboBoxItem Content="https://localhost:5001/api" />
+                        </ComboBox.Items>
+                    </ComboBox>
+                    <Button
+                        x:Name="TestConnectionButton"
+                        Margin="0,0,10,0"
+                        Click="TestConnectionButton_Click"
+                        Content="🔗 Test"
+                        Style="{StaticResource ModernButton}"
+                        ToolTip="Test server connection" />
+                    <TextBlock
+                        Margin="0,0,10,0"
+                        VerticalAlignment="Center"
+                        Foreground="White"
+                        Text="Status:" />
+                    <Ellipse
+                        x:Name="StatusIndicator"
+                        Width="12"
+                        Height="12"
+                        VerticalAlignment="Center"
+                        Fill="Red" />
+                    <TextBlock
+                        x:Name="StatusText"
+                        Margin="10,0"
+                        VerticalAlignment="Center"
+                        Foreground="White"
+                        Text="Disconnected" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!--  Main Content  -->
+        <TabControl
+            Grid.Row="1"
+            Margin="10"
+            SelectionChanged="TabControl_SelectionChanged">
+            <!--  Upload Tab  -->
+            <TabItem Header="📤 Upload Project">
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!--  File Selection  -->
+                    <GroupBox
+                        Grid.Row="0"
+                        Margin="0,0,0,20"
+                        Header="Select Project File">
+                        <Grid Margin="15">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBox
+                                x:Name="FilePathTextBox"
+                                Grid.Row="0"
+                                Grid.Column="0"
+                                Padding="10"
+                                FontSize="14"
+                                Foreground="Gray"
+                                IsReadOnly="True"
+                                Text="No file selected..." />
+                            <Button
+                                x:Name="BrowseButton"
+                                Grid.Row="0"
+                                Grid.Column="1"
+                                Click="BrowseButton_Click"
+                                Content="Browse..."
+                                Style="{StaticResource ModernButton}" />
+                        </Grid>
+                    </GroupBox>
+
+                    <!--  Version Info  -->
+                    <GroupBox
+                        Grid.Row="1"
+                        Margin="0,0,0,20"
+                        Header="Version Information">
+                        <Grid Margin="15">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock
+                                Grid.Row="0"
+                                Grid.Column="0"
+                                Margin="0,0,10,0"
+                                VerticalAlignment="Center"
+                                Text="Version:" />
+                            <TextBox
+                                x:Name="VersionTextBox"
+                                Grid.Row="0"
+                                Grid.Column="1"
+                                Margin="0,0,20,0"
+                                Padding="8"
+                                Text=""
+                                TextChanged="VersionTextBox_TextChanged"
+                                ToolTip="Enter version like 1.0.0" />
+
+                            <TextBlock
+                                Grid.Row="0"
+                                Grid.Column="2"
+                                Margin="0,0,10,0"
+                                VerticalAlignment="Center"
+                                Text="Description:" />
+                            <TextBox
+                                x:Name="DescriptionTextBox"
+                                Grid.Row="0"
+                                Grid.Column="3"
+                                Padding="8"
+                                Text=""
+                                ToolTip="Project description..." />
+
+                            <StackPanel
+                                Grid.Row="1"
+                                Grid.Column="1"
+                                Margin="0,5,0,0"
+                                Orientation="Horizontal">
+                                <TextBlock
+                                    x:Name="VersionValidationText"
+                                    VerticalAlignment="Center"
+                                    FontSize="10"
+                                    Text="" />
+                            </StackPanel>
+                        </Grid>
+                    </GroupBox>
+
+                    <!--  Upload Button  -->
+                    <StackPanel
+                        Grid.Row="2"
+                        Margin="0,0,0,20"
+                        HorizontalAlignment="Center"
+                        Orientation="Horizontal">
+                        <Button
+                            x:Name="UploadButton"
+                            Padding="30,12"
+                            Click="UploadButton_Click"
+                            Content="🚀 Upload Project"
+                            FontSize="16"
+                            IsEnabled="False"
+                            Style="{StaticResource SuccessButton}"
+                            ToolTip="Upload selected project file (Ctrl+U)" />
+                    </StackPanel>
+
+                    <!--  Upload Progress  -->
+                    <GroupBox Grid.Row="3" Header="Upload Progress">
+                        <StackPanel Margin="15">
+                            <ProgressBar
+                                x:Name="UploadProgressBar"
+                                Height="20"
+                                Margin="0,0,0,10" />
+                            <TextBlock
+                                x:Name="UploadStatusText"
+                                HorizontalAlignment="Center"
+                                FontStyle="Italic"
+                                Text="Ready to upload..." />
+                        </StackPanel>
+                    </GroupBox>
+                </Grid>
+            </TabItem>
+
+            <!--  Projects Tab  -->
+            <TabItem Header="📋 Exported Projects">
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!--  Toolbar  -->
+                    <Border
+                        Grid.Row="0"
+                        Margin="0,0,0,10"
+                        Padding="15"
+                        Background="#F5F5F5">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                <CheckBox
+                                    x:Name="GroupByProjectCheckBox"
+                                    Margin="0,0,20,0"
+                                    Checked="GroupByProjectCheckBox_Changed"
+                                    Content="Group by Project"
+                                    Unchecked="GroupByProjectCheckBox_Changed" />
+                                <TextBox
+                                    x:Name="SearchTextBox"
+                                    Width="200"
+                                    Padding="8"
+                                    Text=""
+                                    TextChanged="SearchTextBox_TextChanged"
+                                    ToolTip="Search projects..." />
+                                <Button
+                                    Margin="10,0,0,0"
+                                    Padding="8,5"
+                                    Click="QuickConnectButton_Click"
+                                    Content="🌐 Quick Connect"
+                                    ToolTip="Common server presets" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button
+                                    x:Name="RunnerStatusButton"
+                                    Margin="0,0,5,0"
+                                    Click="RunnerStatusButton_Click"
+                                    Content="🚀 Runner Status"
+                                    Style="{StaticResource ModernButton}" />
+                                <Button
+                                    x:Name="RefreshButton"
+                                    Click="RefreshButton_Click"
+                                    Content="🔄 Refresh"
+                                    Style="{StaticResource ModernButton}" />
+                                <Button
+                                    x:Name="CleanupButton"
+                                    Click="CleanupButton_Click"
+                                    Content="🗑️ Cleanup Old"
+                                    Style="{StaticResource DangerButton}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!--  Projects List  -->
+                    <DataGrid
+                        x:Name="ProjectsDataGrid"
+                        Grid.Row="1"
+                        AlternatingRowBackground="#F9F9F9"
+                        AutoGenerateColumns="False"
+                        CanUserAddRows="False"
+                        GridLinesVisibility="Horizontal"
+                        SelectionMode="Single">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn
+                                Width="200"
+                                Binding="{Binding Name}"
+                                Header="Project Name" />
+                            <DataGridTextColumn
+                                Width="80"
+                                Binding="{Binding Version}"
+                                Header="Version" />
+                            <DataGridTextColumn
+                                Width="80"
+                                Binding="{Binding FormattedSize}"
+                                Header="Size" />
+                            <DataGridTextColumn
+                                Width="60"
+                                Binding="{Binding FileCount}"
+                                Header="Files" />
+                            <DataGridTextColumn
+                                Width="130"
+                                Binding="{Binding CreatedDate, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"
+                                Header="Created" />
+                            <DataGridTextColumn
+                                Width="130"
+                                Binding="{Binding LastModifiedDate, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"
+                                Header="Modified" />
+                            <DataGridTextColumn
+                                Width="80"
+                                Binding="{Binding Status}"
+                                Header="Status" />
+                            <DataGridTemplateColumn Width="250" Header="Actions">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button
+                                                Margin="2"
+                                                Padding="5,2"
+                                                Click="ViewVersionsButton_Click"
+                                                Content="📋 Versions"
+                                                Tag="{Binding}" />
+                                            <Button
+                                                Margin="2"
+                                                Padding="5,2"
+                                                Background="#4CAF50"
+                                                BorderThickness="0"
+                                                Click="RunProjectButton_Click"
+                                                Content="📝 Run"
+                                                Foreground="White"
+                                                Tag="{Binding}" />
+                                            <Button
+                                                Margin="2"
+                                                Padding="5,2"
+                                                Background="#FF9800"
+                                                BorderThickness="0"
+                                                Click="StopProjectButton_Click"
+                                                Content="🛑 Stop"
+                                                Foreground="White"
+                                                Tag="{Binding}" />
+                                            <Button
+                                                Margin="2"
+                                                Padding="5,2"
+                                                Background="#F44336"
+                                                BorderThickness="0"
+                                                Click="DeleteProjectButton_Click"
+                                                Content="🗑️"
+                                                Foreground="White"
+                                                Tag="{Binding}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!--  Project Info Panel  -->
+                    <Expander
+                        Grid.Row="2"
+                        Margin="0,10,0,0"
+                        Header="Project Details">
+                        <Grid x:Name="ProjectDetailsGrid" Margin="15">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0">
+                                <TextBlock
+                                    Margin="0,0,0,10"
+                                    FontWeight="Bold"
+                                    Text="Project Information" />
+                                <TextBlock x:Name="ProjectNameDetail" Text="Name: -" />
+                                <TextBlock x:Name="ProjectVersionDetail" Text="Version: -" />
+                                <TextBlock x:Name="ProjectSizeDetail" Text="Size: -" />
+                                <TextBlock x:Name="ProjectFilesDetail" Text="Files: -" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1">
+                                <TextBlock
+                                    Margin="0,0,0,10"
+                                    FontWeight="Bold"
+                                    Text="Timestamps" />
+                                <TextBlock x:Name="ProjectCreatedDetail" Text="Created: -" />
+                                <TextBlock x:Name="ProjectModifiedDetail" Text="Modified: -" />
+                                <TextBlock x:Name="ProjectAccessedDetail" Text="Accessed: -" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2">
+                                <TextBlock
+                                    Margin="0,0,0,10"
+                                    FontWeight="Bold"
+                                    Text="Actions" />
+                                <Button
+                                    x:Name="CreateVersionButton"
+                                    Margin="0,5"
+                                    Click="CreateVersionButton_Click"
+                                    Content="📋 Create New Version"
+                                    Style="{StaticResource ModernButton}" />
+                                <Button
+                                    x:Name="OpenFolderButton"
+                                    Margin="0,5"
+                                    Click="OpenFolderButton_Click"
+                                    Content="📁 Open Folder"
+                                    Style="{StaticResource ModernButton}" />
+                            </StackPanel>
+                        </Grid>
+                    </Expander>
+                </Grid>
+            </TabItem>
+
+            <!--  Runner Status Tab  -->
+            <TabItem Header="🚀 Runner Status">
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!--  Runner Control Panel  -->
+                    <GroupBox
+                        Grid.Row="0"
+                        Margin="0,0,0,20"
+                        Header="Runner Control">
+                        <Grid Margin="15">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Row="0" Grid.Column="0">
+                                <TextBlock
+                                    Margin="0,0,0,10"
+                                    FontSize="14"
+                                    FontWeight="Bold"
+                                    Text="Runner Control Panel" />
+                                <TextBlock
+                                    x:Name="RunnerStatusText"
+                                    FontSize="12"
+                                    Text="Status: Unknown" />
+                                <TextBlock
+                                    x:Name="RunnerPathText"
+                                    FontSize="10"
+                                    Foreground="Gray"
+                                    Text="Path: -" />
+                            </StackPanel>
+
+                            <StackPanel
+                                Grid.Row="0"
+                                Grid.Column="1"
+                                Orientation="Horizontal">
+                                <Button
+                                    x:Name="StartRunnerButton"
+                                    Margin="5"
+                                    Click="StartRunnerButton_Click"
+                                    Content="▶️ Start Runner"
+                                    Style="{StaticResource SuccessButton}" />
+                                <Button
+                                    x:Name="StopAllRunnersButton"
+                                    Margin="5"
+                                    Click="StopAllRunnersButton_Click"
+                                    Content="⏹️ Stop All"
+                                    Style="{StaticResource DangerButton}" />
+                                <Button
+                                    x:Name="RefreshRunnerStatusButton"
+                                    Margin="5"
+                                    Click="RefreshRunnerStatusButton_Click"
+                                    Content="🔄 Refresh"
+                                    Style="{StaticResource ModernButton}" />
+                            </StackPanel>
+                        </Grid>
+                    </GroupBox>
+
+                    <!--  Running Projects  -->
+                    <GroupBox Grid.Row="1" Header="Running Projects">
+                        <DataGrid
+                            x:Name="RunningProjectsDataGrid"
+                            Margin="15"
+                            AlternatingRowBackground="#F9F9F9"
+                            AutoGenerateColumns="False"
+                            CanUserAddRows="False"
+                            GridLinesVisibility="Horizontal"
+                            SelectionMode="Single">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn
+                                    Width="80"
+                                    Binding="{Binding ProcessId}"
+                                    Header="Process ID" />
+                                <DataGridTextColumn
+                                    Width="200"
+                                    Binding="{Binding ProjectName}"
+                                    Header="Project Name" />
+                                <DataGridTextColumn
+                                    Width="130"
+                                    Binding="{Binding StartedAt, StringFormat='{}{0:yyyy-MM-dd HH:mm:ss}'}"
+                                    Header="Started At" />
+                                <DataGridTextColumn
+                                    Width="100"
+                                    Binding="{Binding RunningTime}"
+                                    Header="Running Time" />
+                                <DataGridTextColumn
+                                    Width="80"
+                                    Binding="{Binding FormattedMemory}"
+                                    Header="Memory" />
+                                <DataGridTextColumn
+                                    Width="150"
+                                    Binding="{Binding WindowTitle}"
+                                    Header="Window" />
+                                <DataGridTemplateColumn Width="120" Header="Actions">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Button
+                                                    Margin="2"
+                                                    Padding="5,2"
+                                                    Background="#FF9800"
+                                                    BorderThickness="0"
+                                                    Click="StopRunningProjectButton_Click"
+                                                    Content="🛑 Stop"
+                                                    Foreground="White"
+                                                    Tag="{Binding}" />
+                                                <Button
+                                                    Margin="2"
+                                                    Padding="5,2"
+                                                    Background="#F44336"
+                                                    BorderThickness="0"
+                                                    Click="KillProcessButton_Click"
+                                                    Content="💀 Kill"
+                                                    Foreground="White"
+                                                    Tag="{Binding}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+                </Grid>
+            </TabItem>
+
+            <!--  Statistics Tab  -->
+            <TabItem Header="📊 Statistics">
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!--  Stats Cards  -->
+                    <UniformGrid
+                        Grid.Row="0"
+                        Margin="0,0,0,20"
+                        Rows="1">
+                        <Border
+                            Margin="5"
+                            Padding="20"
+                            Background="#E3F2FD"
+                            CornerRadius="8">
+                            <StackPanel>
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    FontSize="32"
+                                    Text="📁" />
+                                <TextBlock
+                                    x:Name="TotalProjectsText"
+                                    HorizontalAlignment="Center"
+                                    FontSize="24"
+                                    FontWeight="Bold"
+                                    Text="0" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    FontStyle="Italic"
+                                    Text="Total Projects" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border
+                            Margin="5"
+                            Padding="20"
+                            Background="#E8F5E8"
+                            CornerRadius="8">
+                            <StackPanel>
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    FontSize="32"
+                                    Text="💾" />
+                                <TextBlock
+                                    x:Name="TotalSizeText"
+                                    HorizontalAlignment="Center"
+                                    FontSize="24"
+                                    FontWeight="Bold"
+                                    Text="0 B" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    FontStyle="Italic"
+                                    Text="Total Size" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border
+                            Margin="5"
+                            Padding="20"
+                            Background="#FFF3E0"
+                            CornerRadius="8">
+                            <StackPanel>
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    FontSize="32"
+                                    Text="📄" />
+                                <TextBlock
+                                    x:Name="TotalFilesText"
+                                    HorizontalAlignment="Center"
+                                    FontSize="24"
+                                    FontWeight="Bold"
+                                    Text="0" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    FontStyle="Italic"
+                                    Text="Total Files" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border
+                            Margin="5"
+                            Padding="20"
+                            Background="#F3E5F5"
+                            CornerRadius="8">
+                            <StackPanel>
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    FontSize="32"
+                                    Text="🔢" />
+                                <TextBlock
+                                    x:Name="UniqueProjectsText"
+                                    HorizontalAlignment="Center"
+                                    FontSize="24"
+                                    FontWeight="Bold"
+                                    Text="0" />
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    FontStyle="Italic"
+                                    Text="Unique Projects" />
+                            </StackPanel>
+                        </Border>
+                    </UniformGrid>
+
+                    <!--  Recent Activity  -->
+                    <GroupBox Grid.Row="1" Header="Recent Activity">
+                        <ListBox x:Name="RecentActivityListBox" Margin="10">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,2" Padding="10,5">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock
+                                                Grid.Column="0"
+                                                Margin="0,0,10,0"
+                                                VerticalAlignment="Center"
+                                                FontSize="16"
+                                                Text="{Binding Icon}" />
+                                            <TextBlock
+                                                Grid.Column="1"
+                                                VerticalAlignment="Center"
+                                                Text="{Binding Message}" />
+                                            <TextBlock
+                                                Grid.Column="2"
+                                                VerticalAlignment="Center"
+                                                Foreground="Gray"
+                                                Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </GroupBox>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <!--  Status Bar  -->
+        <Border
+            Grid.Row="2"
+            Background="#F5F5F5"
+            BorderBrush="#E0E0E0"
+            BorderThickness="0,1,0,0">
+            <Grid Margin="10,5">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock
+                    x:Name="StatusBarText"
+                    Grid.Column="0"
+                    VerticalAlignment="Center"
+                    Text="Ready • Shortcuts: F5=Refresh, F12=Settings, Ctrl+U=Upload" />
+                <TextBlock
+                    Grid.Column="1"
+                    Margin="10,0"
+                    VerticalAlignment="Center"
+                    Foreground="Gray"
+                    Text="|" />
+                <TextBlock
+                    x:Name="ConnectionStatusText"
+                    Grid.Column="2"
+                    VerticalAlignment="Center"
+                    Foreground="Red"
+                    Text="API: Disconnected" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -1,0 +1,152 @@
+﻿<Window
+    x:Class="ProjectExporterMvvm.Views.ServerSettingsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Server Settings"
+    Width="600"
+    Height="450"
+    ShowInTaskbar="False"
+    WindowStartupLocation="CenterOwner">
+
+    <Grid Margin="30">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!--  Header  -->
+        <Border
+            Grid.Row="0"
+            Margin="0,0,0,20"
+            Padding="15"
+            Background="#E3F2FD"
+            CornerRadius="4">
+            <StackPanel>
+                <TextBlock
+                    FontSize="18"
+                    FontWeight="Bold"
+                    Text="🌐 Server Configuration" />
+                <TextBlock
+                    FontSize="12"
+                    Foreground="Gray"
+                    Text="Configure your Project Exporter API server connection" />
+            </StackPanel>
+        </Border>
+
+        <!--  Current Server  -->
+        <GroupBox
+            Grid.Row="1"
+            Margin="0,0,0,20"
+            Header="Server URL">
+            <Grid Margin="15">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock
+                    Grid.Row="0"
+                    Margin="0,0,0,5"
+                    Text="Enter the API server URL:" />
+                <TextBox
+                    x:Name="ServerUrlTextBox"
+                    Grid.Row="1"
+                    Margin="0,0,0,10"
+                    Padding="10"
+                    FontSize="14" />
+
+                <StackPanel Grid.Row="2" Orientation="Horizontal">
+                    <Button
+                        x:Name="TestServerButton"
+                        Margin="0,0,10,0"
+                        Padding="10,5"
+                        Click="TestServerButton_Click"
+                        Content="🔗 Test Connection" />
+                    <TextBlock
+                        x:Name="TestResultText"
+                        VerticalAlignment="Center"
+                        FontWeight="Bold" />
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+
+        <!--  Recent Servers  -->
+        <GroupBox Grid.Row="2" Header="Recent Servers">
+            <Grid Margin="15">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <ListBox
+                    x:Name="RecentServersListBox"
+                    Grid.Row="0"
+                    Margin="0,0,0,10"
+                    MouseDoubleClick="RecentServersListBox_MouseDoubleClick">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock
+                                    Grid.Column="0"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding}" />
+                                <Button
+                                    Grid.Column="1"
+                                    Margin="5,0,0,0"
+                                    Padding="5,2"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Click="RemoveServerButton_Click"
+                                    Content="❌"
+                                    Tag="{Binding}"
+                                    ToolTip="Remove from recent servers" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <TextBlock
+                    Grid.Row="1"
+                    HorizontalAlignment="Center"
+                    FontStyle="Italic"
+                    Foreground="Gray"
+                    Text="💡 Double-click a server to select it" />
+            </Grid>
+        </GroupBox>
+
+        <!--  Buttons  -->
+        <StackPanel
+            Grid.Row="3"
+            Margin="0,20,0,0"
+            HorizontalAlignment="Right"
+            Orientation="Horizontal">
+            <Button
+                x:Name="AddPresetButton"
+                Margin="5"
+                Padding="15,8"
+                Click="AddPresetButton_Click"
+                Content="📋 Add Preset" />
+            <Button
+                x:Name="OkButton"
+                Margin="5"
+                Padding="15,8"
+                Click="OkButton_Click"
+                Content="✅ OK"
+                IsDefault="True" />
+            <Button
+                Margin="5"
+                Padding="15,8"
+                Click="CancelButton_Click"
+                Content="❌ Cancel"
+                IsCancel="True" />
+        </StackPanel>
+    </Grid>
+</Window>
