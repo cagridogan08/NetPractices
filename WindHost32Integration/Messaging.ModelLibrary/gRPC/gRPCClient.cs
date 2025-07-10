@@ -1,6 +1,7 @@
 ﻿using Grpc.Core;
 using Grpc.Net.Client;
 using Grpc.Net.Client.Configuration;
+using Messaging.ModelLibrary.Abstract;
 using static Messaging.ModelLibrary.Grpc.MessagingService;
 
 namespace Messaging.ModelLibrary.Grpc;

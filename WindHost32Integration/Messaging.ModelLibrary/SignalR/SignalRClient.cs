@@ -1,5 +1,6 @@
 ﻿using System.Data;
 using System.Text.Json;
+using Messaging.ModelLibrary.Abstract;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;

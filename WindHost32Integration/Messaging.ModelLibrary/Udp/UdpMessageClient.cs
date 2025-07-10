@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.ModelLibrary.Udp;
 

@@ -1,4 +1,6 @@
 ﻿using System.Collections.Concurrent;
+using Messaging.ModelLibrary.Abstract;
+
 namespace Messaging.ModelLibrary.Broker;
 
 /// <summary>
@@ -7,6 +9,7 @@ namespace Messaging.ModelLibrary.Broker;
 public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
 {
     #region Fields
+
     private readonly ConcurrentDictionary<string, IMessageTransport> _transports = new();
     private readonly ConcurrentDictionary<string, ClientInfo> _clients = new();
     private readonly ConcurrentDictionary<string, HashSet<string>> _groups = new();
@@ -14,6 +17,7 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
     private readonly ConcurrentDictionary<string, string> _clientToTransport = new();
     private readonly IMessageStore? _messageStore;
     private bool _disposed;
+
     #endregion
 
     #region Events

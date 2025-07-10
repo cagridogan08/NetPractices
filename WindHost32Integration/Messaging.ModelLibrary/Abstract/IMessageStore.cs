@@ -1,5 +1,5 @@
 ﻿
-namespace Messaging.ModelLibrary
+namespace Messaging.ModelLibrary.Abstract
 {
 
     /// <summary>

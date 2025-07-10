@@ -1,4 +1,6 @@
-﻿namespace Messaging.ModelLibrary;
+﻿using Messaging.ModelLibrary.Abstract;
+
+namespace Messaging.ModelLibrary;
 
 public class MessagingService : IMessagingService
 {

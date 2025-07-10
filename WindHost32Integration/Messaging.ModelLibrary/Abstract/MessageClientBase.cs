@@ -1,5 +1,5 @@
 ﻿
-namespace Messaging.ModelLibrary;
+namespace Messaging.ModelLibrary.Abstract;
 
 /// <summary>
 /// Enhanced base class for message clients with built-in client-to-client features

@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using Messaging.ModelLibrary;
+using Messaging.ModelLibrary.Abstract;
 using Messaging.ModelLibrary.Pipe;
 
 namespace NamedPipeServer

@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
+using Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.ModelLibrary.Grpc;
 

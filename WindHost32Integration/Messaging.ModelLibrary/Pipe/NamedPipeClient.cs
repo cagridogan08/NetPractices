@@ -1,5 +1,6 @@
 ﻿using System.IO.Pipes;
 using System.Text.Json;
+using Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.ModelLibrary.Pipe;
 

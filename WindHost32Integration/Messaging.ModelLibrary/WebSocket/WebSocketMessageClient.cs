@@ -3,6 +3,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.ModelLibrary.WebSocket;
 

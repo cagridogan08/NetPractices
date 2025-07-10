@@ -13,6 +13,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Input;
+using Messaging.ModelLibrary.Abstract;
 using Messaging.ModelLibrary.Grpc;
 using MessagingService = Messaging.ModelLibrary.MessagingService;
 
