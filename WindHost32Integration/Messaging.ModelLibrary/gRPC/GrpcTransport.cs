@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -69,59 +70,80 @@ public class GrpcTransport(string address = "localhost", int port = 5000) : IMes
                     webBuilder.ConfigureServices(services =>
                     {
                         services.AddSingleton(this);
-                        services.AddControllers();
 
-                        // Add CORS for cross-origin requests
+                        // Add gRPC services - THIS WAS MISSING!
+                        services.AddGrpc(options =>
+                        {
+                            options.MaxReceiveMessageSize = 4 * 1024 * 1024; // 4MB
+                            options.MaxSendMessageSize = 4 * 1024 * 1024; // 4MB
+                        });
+
+                        // Add CORS for cross-origin requests (for web clients)
                         services.AddCors(options =>
                         {
                             options.AddDefaultPolicy(policy =>
                             {
                                 policy.AllowAnyOrigin()
                                       .AllowAnyMethod()
-                                      .AllowAnyHeader();
+                                      .AllowAnyHeader()
+                                      .WithExposedHeaders("Grpc-Status", "Grpc-Message", "Grpc-Encoding", "Grpc-Accept-Encoding");
                             });
                         });
                     });
 
                     webBuilder.Configure(app =>
                     {
-                        // Add error handling middleware
-                        app.UseExceptionHandler("/error");
-
-                        app.UseCors();
                         app.UseRouting();
+
+                        // Enable CORS before gRPC
+                        app.UseCors();
 
                         app.UseEndpoints(endpoints =>
                         {
+                            // Map the gRPC service - THIS WAS MISSING!
+                            endpoints.MapGrpcService<GrpcMessagingServiceImpl>();
+
                             // Health check endpoint
                             endpoints.MapGet("/health", async context =>
                             {
-                                await context.Response.WriteAsync("OK");
+                                context.Response.ContentType = "text/plain";
+                                await context.Response.WriteAsync("gRPC server is running");
                             });
 
-                            // Message endpoints
-                            //endpoints.MapPost("/api/messages", HandleSendMessage);
-                            //endpoints.MapGet("/api/messages/{clientId}", HandleGetMessages);
-
-                            // Error handling endpoint
-                            endpoints.MapGet("/error", async context =>
+                            // Fallback for unmatched requests
+                            endpoints.MapFallback(async context =>
                             {
-                                context.Response.StatusCode = 500;
-                                await context.Response.WriteAsync("Internal Server Error");
+                                context.Response.StatusCode = 404;
+                                await context.Response.WriteAsync("gRPC endpoint not found");
                             });
                         });
                     });
 
-                    var url = enableHttps ? $"https://{address}:{port}" : $"http://{address}:{port}";
+                    var url = enableHttps ? $"https://{address1}:{port1}" : $"http://{address1}:{port1}";
                     webBuilder.UseUrls(url);
 
-                    // Configure Kestrel to support both HTTP/1.1 and HTTP/2
+                    // Configure Kestrel properly for gRPC
                     webBuilder.UseKestrel(options =>
                     {
-                        //options.ConfigureEndpointDefaults(endpointOptions =>
-                        //{
-                        //    endpointOptions.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http1AndHttp2;
-                        //});
+                        options.ListenAnyIP(port1, listenOptions =>
+                        {
+                            if (enableHttps && !string.IsNullOrEmpty(certPath))
+                            {
+                                listenOptions.UseHttps(certPath, certPassword);
+                            }
+
+                            // Configure HTTP/2 for gRPC
+                            listenOptions.Protocols = HttpProtocols.Http2;
+                        });
+
+                        // For development/testing, also listen on HTTP/1.1 for health checks
+                        if (!enableHttps)
+                        {
+                            options.ListenAnyIP(port1 + 1, listenOptions =>
+                            {
+                                listenOptions.Protocols = HttpProtocols.Http1;
+                            });
+                        }
                     });
                 })
                 .ConfigureLogging(logging =>
@@ -280,7 +302,9 @@ public class GrpcMessagingServiceImpl(GrpcTransport transport) : MessagingServic
         {
             Id = Guid.NewGuid().ToString(),
             Name = "Unknown",
-            Address = context.Peer
+            Address = context.Peer,
+            ConnectedAt = DateTime.UtcNow,
+            IsActive = true
         };
 
         var clientContext = new ClientStreamContext(connectionInfo, responseStream, context.CancellationToken);
@@ -316,6 +340,10 @@ public class GrpcMessagingServiceImpl(GrpcTransport transport) : MessagingServic
                     clientContext.OnErrorOccurred($"Message processing error: {ex.Message}", ex);
                 }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected during cancellation
         }
         catch (Exception ex)
         {
@@ -366,10 +394,14 @@ public class GrpcMessagingServiceImpl(GrpcTransport transport) : MessagingServic
         {
             Id = Guid.NewGuid().ToString(),
             Name = Environment.MachineName,
-            Address = context.Host,
+            Address = context.Host ?? "localhost",
             ConnectedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             IsActive = true
         };
+
+        // Add any additional properties if needed
+        connectionInfo.Properties.Add("ServerVersion", "1.0.0");
+        connectionInfo.Properties.Add("Protocol", "HTTP/2");
 
         return Task.FromResult(connectionInfo);
     }

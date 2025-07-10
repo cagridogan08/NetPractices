@@ -106,7 +106,7 @@ public class RtpClient : IMessageClient
                 Sender = clientName,
                 Type = MessageType.Handshake
             };
-
+            IsConnected = true;
             var success = await SendMessageAsync(handshakeMessage);
             if (!success)
             {

@@ -9,6 +9,7 @@ using Messaging.ModelLibrary.WebSocket;
 using MessagingApp.WPF.ViewModels;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Input;
@@ -734,6 +735,7 @@ public class MainViewModel : INotifyPropertyChanged
             {
                 Connections.Add(e.Connection);
             }
+
         });
     }
 

@@ -90,19 +90,9 @@ public class SignalRTransport(string address = "localhost", int port = 5003, str
                         {
                             services.AddCors(options =>
                             {
-                                options.AddDefaultPolicy(policy =>
+                                options.AddPolicy("CorsPolicy", policy =>
                                 {
-                                    if (corsOrigins.Contains("*"))
-                                    {
-                                        policy.AllowAnyOrigin();
-                                    }
-                                    else
-                                    {
-                                        policy.WithOrigins(corsOrigins);
-                                    }
-                                    policy.AllowAnyMethod()
-                                          .AllowAnyHeader()
-                                          .AllowCredentials();
+                                    policy.AllowAnyHeader().AllowAnyMethod().SetIsOriginAllowed(_ => true).AllowCredentials();
                                 });
                             });
                         }
@@ -342,7 +332,7 @@ public class MessagingHub(SignalRTransport transport) : Hub
             if (string.IsNullOrEmpty(message.Receiver))
             {
                 // Broadcast to all clients
-                await Clients.All.SendAsync("ReceiveMessage", message);
+                transport.OnMessageReceived(message, Context.ConnectionId);
             }
             else
             {
@@ -351,13 +341,14 @@ public class MessagingHub(SignalRTransport transport) : Hub
             }
 
             // Notify the transport
-            transport.OnMessageReceived(message, Context.ConnectionId);
+            //transport.OnMessageReceived(message, Context.ConnectionId);
         }
         catch (Exception ex)
         {
             transport.OnError($"Send message error: {ex.Message}", Context.ConnectionId);
         }
     }
+
 
     public async Task SendMessageToGroupAsync(string groupName, Message message)
     {

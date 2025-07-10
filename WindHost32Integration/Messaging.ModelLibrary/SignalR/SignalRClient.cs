@@ -17,6 +17,7 @@ namespace Messaging.ModelLibrary.SignalR
 
         private bool _disposed;
 
+        public IList<(string, string)> OtherConnections { get; } = new List<(string, string)>();
 
 
         #endregion
@@ -190,11 +191,17 @@ namespace Messaging.ModelLibrary.SignalR
             // Handle user connection notifications
             _hubConnection.On<string, string>("UserConnected", (connectionId, userName) =>
             {
+                OtherConnections.Add((connectionId, userName));
                 // Optional: Handle other users connecting
             });
 
             _hubConnection.On<string, string>("UserDisconnected", (connectionId, userName) =>
             {
+                var item = OtherConnections.FirstOrDefault(c => c.Item1 == connectionId);
+                if (item != default)
+                {
+                    OtherConnections.Remove(item);
+                }
                 // Optional: Handle other users disconnecting
             });
 

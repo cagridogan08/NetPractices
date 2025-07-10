@@ -1,5 +1,6 @@
 ﻿using Grpc.Core;
 using Grpc.Net.Client;
+using Grpc.Net.Client.Configuration;
 using static Messaging.ModelLibrary.Grpc.MessagingService;
 
 namespace Messaging.ModelLibrary.Grpc;
@@ -63,36 +64,58 @@ public class GrpcClient : IMessageClient
             var clientName = configuration.GetValueOrDefault("ClientName", Environment.UserName) as string ?? Environment.UserName;
             var maxMessageSize = configuration.GetValueOrDefault("MaxReceiveMessageSize", 4 * 1024 * 1024) as int? ?? 4 * 1024 * 1024;
 
+            // Create HTTP handler with proper configuration
+            var httpHandler = new HttpClientHandler();
+
+            // Only disable certificate validation for development
+            if (serverAddress.StartsWith("http://") ||
+                configuration.GetValueOrDefault("DisableCertificateValidation", false) as bool? == true)
+            {
+                httpHandler.ServerCertificateCustomValidationCallback =
+                    HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+            }
+
             var channelOptions = new GrpcChannelOptions
             {
-                MaxReceiveMessageSize = maxMessageSize
+                HttpHandler = httpHandler,
+                MaxReceiveMessageSize = maxMessageSize,
+                MaxSendMessageSize = maxMessageSize,
+                // Add retry policy
+                ServiceConfig = new ServiceConfig
+                {
+                    MethodConfigs =
+                {
+                    new MethodConfig
+                    {
+                        Names = { MethodName.Default },
+                        RetryPolicy = new RetryPolicy
+                        {
+                            MaxAttempts = 3,
+                            InitialBackoff = TimeSpan.FromSeconds(1),
+                            MaxBackoff = TimeSpan.FromSeconds(5),
+                            BackoffMultiplier = 1.5,
+                            RetryableStatusCodes = { StatusCode.Unavailable, StatusCode.DeadlineExceeded }
+                        }
+                    }
+                }
+                }
             };
 
+            // Add custom credentials if provided
             if (configuration.TryGetValue("Credentials", out var credentials) && credentials is ChannelCredentials channelCredentials)
             {
                 channelOptions.Credentials = channelCredentials;
             }
 
-            var httpHandler = new HttpClientHandler
-            {
-                ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-            };
-
-            _channel = GrpcChannel.ForAddress(serverAddress, new GrpcChannelOptions
-            {
-                HttpHandler = httpHandler,
-                MaxReceiveMessageSize = maxMessageSize,
-            });
+            _channel = GrpcChannel.ForAddress(serverAddress, channelOptions);
             _client = new MessagingServiceClient(_channel);
             _cancellationTokenSource = new CancellationTokenSource();
 
-            // Start the streaming call
-            _streamingCall = _client.StreamMessages(cancellationToken: _cancellationTokenSource.Token);
-
-            // Get connection info from server
+            // Test connection first with GetConnectionInfo
             try
             {
                 var connectionResponse = await _client.GetConnectionInfoAsync(new Empty(),
+                    deadline: DateTime.UtcNow.AddSeconds(10),
                     cancellationToken: _cancellationTokenSource.Token);
 
                 ConnectionInfo = new ConnectionInfo
@@ -105,16 +128,21 @@ public class GrpcClient : IMessageClient
                     Properties = connectionResponse.Properties.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value)
                 };
             }
-            catch
+            catch (RpcException ex) when (ex.StatusCode == StatusCode.Unimplemented)
             {
                 // Fallback if server doesn't support GetConnectionInfo
                 ConnectionInfo = new ConnectionInfo
                 {
                     Id = Guid.NewGuid().ToString(),
                     Name = clientName,
-                    Address = serverAddress
+                    Address = serverAddress,
+                    ConnectedAt = DateTime.UtcNow,
+                    IsActive = true
                 };
             }
+
+            // Start the streaming call
+            _streamingCall = _client.StreamMessages(cancellationToken: _cancellationTokenSource.Token);
 
             // Send handshake message
             var handshakeMessage = new GrpcMessage
@@ -137,6 +165,17 @@ public class GrpcClient : IMessageClient
         catch (Exception ex)
         {
             ErrorOccurred?.Invoke(this, new ErrorEventArgs($"gRPC connection failed: {ex.Message}", ex));
+
+            // Cleanup on failure
+            try
+            {
+                await DisconnectAsync();
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+
             return false;
         }
     }
