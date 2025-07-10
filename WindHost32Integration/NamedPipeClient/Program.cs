@@ -20,7 +20,7 @@ namespace NamedPipeClient
             var _messagingService = new Messaging.ModelLibrary.MessagingService();
             try
             {
-                var client = new Messaging.ModelLibrary.NamedPipeClient();
+                var client = new Messaging.ModelLibrary.Pipe.NamedPipeClient();
                 var configuration = new Dictionary<string, object>
                 {
                     ["ServerName"] = ".",

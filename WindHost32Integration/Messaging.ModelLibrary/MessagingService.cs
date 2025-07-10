@@ -2,21 +2,21 @@
 
 public class MessagingService : IMessagingService
 {
-    private IMessageTransport _transport;
-    private IMessageClient _client;
+    private IMessageTransport? _transport;
+    private IMessageClient? _client;
     private bool _disposed;
 
-    public event EventHandler<MessageEventArgs> MessageReceived;
-    public event EventHandler<ConnectionEventArgs> Connected;
-    public event EventHandler<ConnectionEventArgs> Disconnected;
-    public event EventHandler<ErrorEventArgs> ErrorOccurred;
+    public event EventHandler<MessageEventArgs>? MessageReceived;
+    public event EventHandler<ConnectionEventArgs>? Connected;
+    public event EventHandler<ConnectionEventArgs>? Disconnected;
+    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
     public bool IsRunning => _transport?.IsRunning == true || _client?.IsConnected == true;
     public MessagingMode Mode { get; private set; } = MessagingMode.None;
     public string ClientName { get; set; } = Environment.UserName;
     public IReadOnlyList<ConnectionInfo> Connections => _transport?.Connections ?? new List<ConnectionInfo>();
 
-    public async Task<bool> StartServerAsync(IMessageTransport transport, Dictionary<string, object> configuration = null)
+    public async Task<bool> StartServerAsync(IMessageTransport transport, Dictionary<string, object>? configuration = null)
     {
         try
         {
@@ -102,7 +102,7 @@ public class MessagingService : IMessagingService
         }
     }
 
-    public async Task<bool> SendMessageAsync(string content, string receiver = null, MessageType type = MessageType.Text)
+    public async Task<bool> SendMessageAsync(string content, string? receiver = null, MessageType type = MessageType.Text)
     {
         var message = new Message
         {
@@ -163,42 +163,42 @@ public class MessagingService : IMessagingService
         return await _transport.BroadcastMessageAsync(message);
     }
 
-    private void OnTransportMessageReceived(object sender, MessageEventArgs e)
+    private void OnTransportMessageReceived(object? sender, MessageEventArgs e)
     {
         MessageReceived?.Invoke(this, e);
     }
 
-    private void OnTransportClientConnected(object sender, ConnectionEventArgs e)
+    private void OnTransportClientConnected(object? sender, ConnectionEventArgs e)
     {
         Connected?.Invoke(this, e);
     }
 
-    private void OnTransportClientDisconnected(object sender, ConnectionEventArgs e)
+    private void OnTransportClientDisconnected(object? sender, ConnectionEventArgs e)
     {
         Disconnected?.Invoke(this, e);
     }
 
-    private void OnTransportErrorOccurred(object sender, ErrorEventArgs e)
+    private void OnTransportErrorOccurred(object? sender, ErrorEventArgs e)
     {
         ErrorOccurred?.Invoke(this, e);
     }
 
-    private void OnClientMessageReceived(object sender, MessageEventArgs e)
+    private void OnClientMessageReceived(object? sender, MessageEventArgs e)
     {
         MessageReceived?.Invoke(this, e);
     }
 
-    private void OnClientConnected(object sender, ConnectionEventArgs e)
+    private void OnClientConnected(object? sender, ConnectionEventArgs e)
     {
         Connected?.Invoke(this, e);
     }
 
-    private void OnClientDisconnected(object sender, ConnectionEventArgs e)
+    private void OnClientDisconnected(object? sender, ConnectionEventArgs e)
     {
         Disconnected?.Invoke(this, e);
     }
 
-    private void OnClientErrorOccurred(object sender, ErrorEventArgs e)
+    private void OnClientErrorOccurred(object? sender, ErrorEventArgs e)
     {
         ErrorOccurred?.Invoke(this, e);
     }

@@ -1,0 +1,55 @@
+﻿syntax = "proto3";
+
+option csharp_namespace = "Messaging.ModelLibrary.Grpc";
+
+package messaging;
+
+// The messaging service definition
+service MessagingService {
+  // Bidirectional streaming for real-time messaging
+  rpc StreamMessages(stream GrpcMessage) returns (stream GrpcMessage);
+  
+  // Simple request-response for sending single messages
+  rpc SendMessage(GrpcMessage) returns (MessageResponse);
+  
+  // Get connection info
+  rpc GetConnectionInfo(Empty) returns (GrpcConnectionInfo);
+}
+
+// Message structure
+message GrpcMessage {
+  string id = 1;
+  string content = 2;
+  string sender = 3;
+  string receiver = 4;
+  int64 timestamp = 5;
+  GrpcMessageType type = 6;
+  map<string, string> metadata = 7;
+}
+
+// Message types
+enum GrpcMessageType {
+  TEXT = 0;
+  ERROR = 1;
+  HANDSHAKE = 2;
+}
+
+// Connection information
+message GrpcConnectionInfo {
+  string id = 1;
+  string name = 2;
+  string address = 3;
+  int64 connected_at = 4;
+  bool is_active = 5;
+  map<string, string> properties = 6;
+}
+
+// Response for message sending
+message MessageResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// Empty message for requests that don't need parameters
+message Empty {
+}

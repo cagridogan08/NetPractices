@@ -14,13 +14,13 @@ public class WebSocketTransport : IMessageTransport
 
     private HttpListener? _httpListener;
 
-    private CancellationTokenSource? _cancellationTokenSource = new CancellationTokenSource();
+    private CancellationTokenSource? _cancellationTokenSource;
 
     private Task? _serverTask;
 
     private bool _disposed;
 
-    private Dictionary<string, object> _baseConfiguration => new Dictionary<string, object>()
+    private static Dictionary<string, object> BaseConfiguration => new()
     {
         {"Host","localhost"}
         ,{"Port",8080}
@@ -47,32 +47,34 @@ public class WebSocketTransport : IMessageTransport
 
     #endregion
 
-
     #region Methods
 
     private async Task HandleWebSocketRequest(HttpListenerContext context)
     {
         try
         {
-            WebSocketContext? webSocketContext = await context.AcceptWebSocketAsync(null);
+            WebSocketContext webSocketContext = await context.AcceptWebSocketAsync(null);
             var webSocket = webSocketContext.WebSocket;
 
             var connectionInfo = new ConnectionInfo
             {
                 Id = Guid.NewGuid().ToString(),
                 Name = "Unknown",
-                Address = context.Request.RemoteEndPoint?.ToString() ?? "Unknown"
+                Address = context.Request.RemoteEndPoint.ToString() ?? "Unknown"
             };
 
-            var clientConnection = new WebSocketClientConnection(webSocket, connectionInfo, _cancellationTokenSource.Token);
-            clientConnection.MessageReceived += OnClientMessageReceived;
-            clientConnection.Disconnected += OnClientDisconnected;
-            clientConnection.ErrorOccurred += OnClientErrorOccurred;
+            if (_cancellationTokenSource != null)
+            {
+                var clientConnection = new WebSocketClientConnection(webSocket, connectionInfo, _cancellationTokenSource.Token);
+                clientConnection.MessageReceived += OnClientMessageReceived;
+                clientConnection.Disconnected += OnClientDisconnected;
+                clientConnection.ErrorOccurred += OnClientErrorOccurred;
 
-            _connections.TryAdd(connectionInfo.Id, clientConnection);
-            ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
+                _connections.TryAdd(connectionInfo.Id, clientConnection);
+                ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
 
-            clientConnection.StartReading();
+                clientConnection.StartReading();
+            }
         }
         catch (Exception ex)
         {
@@ -129,13 +131,28 @@ public class WebSocketTransport : IMessageTransport
         }
     }
 
-
+    /// <summary>
+    /// Starts an HTTP/WebSocket server using the provided configuration.
+    /// Stops any currently running server instance before starting a new one.
+    /// 
+    /// Optional configuration dictionary keys:
+    /// - "Host" (string, optional): The hostname or IP address to bind the server to. Defaults to "localhost".
+    /// - "Port" (int, optional): The port number the server will listen on. Defaults to 8080.
+    /// - "Path" (string, optional): The URL path (e.g., "/ws") to register with the listener. Defaults to "/".
+    /// 
+    /// Constructs an HTTP prefix (e.g., "http://localhost:8080/"), starts the HttpListener,
+    /// and begins handling incoming requests asynchronously.
+    /// 
+    /// Triggers the ErrorOccurred event if the server fails to start.
+    /// </summary>
+    /// <param name="configuration">Optional dictionary containing HTTP/WebSocket server configuration.</param>
+    /// <returns>True if the server started successfully; otherwise, false.</returns>
     public async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
     {
         try
         {
             await StopAsync();
-            configuration ??= _baseConfiguration;
+            configuration ??= BaseConfiguration;
             var host = configuration.GetValueOrDefault("Host", "localhost") as string ?? "localhost";
             var port = configuration.GetValueOrDefault("Port", 8080) as int? ?? 8080;
             var path = configuration.GetValueOrDefault("Path", "/") as string ?? "/";
@@ -157,20 +174,23 @@ public class WebSocketTransport : IMessageTransport
 
     private async Task RunServerAsync()
     {
-        while (!_cancellationTokenSource.Token.IsCancellationRequested)
+        while (_cancellationTokenSource is { Token.IsCancellationRequested: false })
         {
             try
             {
-                var context = await _httpListener.GetContextAsync();
+                if (_httpListener != null)
+                {
+                    var context = await _httpListener.GetContextAsync();
 
-                if (context.Request.IsWebSocketRequest)
-                {
-                    _ = Task.Run(async () => await HandleWebSocketRequest(context), _cancellationTokenSource.Token);
-                }
-                else
-                {
-                    context.Response.StatusCode = 400;
-                    context.Response.Close();
+                    if (context.Request.IsWebSocketRequest)
+                    {
+                        _ = Task.Run(async () => await HandleWebSocketRequest(context), _cancellationTokenSource.Token);
+                    }
+                    else
+                    {
+                        context.Response.StatusCode = 400;
+                        context.Response.Close();
+                    }
                 }
             }
             catch (ObjectDisposedException)
@@ -247,7 +267,7 @@ public class WebSocketTransport : IMessageTransport
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message, string connectionId = null)
+    public async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
     {
         try
         {
@@ -287,45 +307,40 @@ public class WebSocketTransport : IMessageTransport
 
     #endregion
 
+    #region ClientConnectionHandler
 
-    private class WebSocketClientConnection : IDisposable
+    private class WebSocketClientConnection(
+        System.Net.WebSockets.WebSocket webSocket,
+        ConnectionInfo info,
+        CancellationToken cancellationToken)
+        : IDisposable
     {
-        private readonly System.Net.WebSockets.WebSocket _webSocket;
-        private readonly CancellationToken _cancellationToken;
-        private Task _readTask;
+        private Task? _readTask;
         private bool _disposed;
 
-        public WebSocketClientConnection(System.Net.WebSockets.WebSocket webSocket,
-            ConnectionInfo info, CancellationToken cancellationToken)
-        {
-            _webSocket = webSocket;
-            Info = info;
-            _cancellationToken = cancellationToken;
-        }
+        public ConnectionInfo Info { get; } = info;
 
-        public ConnectionInfo Info { get; }
-
-        public event EventHandler<MessageEventArgs> MessageReceived;
-        public event EventHandler<ConnectionEventArgs> Disconnected;
-        public event EventHandler<ErrorEventArgs> ErrorOccurred;
+        public event EventHandler<MessageEventArgs>? MessageReceived;
+        public event EventHandler<ConnectionEventArgs>? Disconnected;
+        public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
         public void StartReading()
         {
-            _readTask = Task.Run(ReadMessagesAsync, _cancellationToken);
+            _readTask = Task.Run(ReadMessagesAsync, cancellationToken);
         }
 
         public async Task<bool> SendMessageAsync(Message message)
         {
             try
             {
-                if (_disposed || _webSocket.State != WebSocketState.Open)
+                if (_disposed || webSocket.State != WebSocketState.Open)
                     return false;
 
                 var json = JsonSerializer.Serialize(message);
                 var buffer = Encoding.UTF8.GetBytes(json);
                 var segment = new ArraySegment<byte>(buffer);
 
-                await _webSocket.SendAsync(segment, WebSocketMessageType.Text, true, _cancellationToken);
+                await webSocket.SendAsync(segment, WebSocketMessageType.Text, true, cancellationToken);
                 return true;
             }
             catch (ObjectDisposedException)
@@ -353,11 +368,11 @@ public class WebSocketTransport : IMessageTransport
 
             try
             {
-                while (!_cancellationToken.IsCancellationRequested &&
+                while (!cancellationToken.IsCancellationRequested &&
                        !_disposed &&
-                       _webSocket.State == WebSocketState.Open)
+                       webSocket.State == WebSocketState.Open)
                 {
-                    var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cancellationToken);
+                    var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
 
                     if (result.MessageType == WebSocketMessageType.Text)
                     {
@@ -368,7 +383,7 @@ public class WebSocketTransport : IMessageTransport
                             if (!string.IsNullOrWhiteSpace(json))
                             {
                                 var message = JsonSerializer.Deserialize<Message>(json);
-                                MessageReceived?.Invoke(this, new MessageEventArgs(message, Info));
+                                if (message != null) MessageReceived?.Invoke(this, new MessageEventArgs(message, Info));
                             }
                         }
                         catch (JsonException ex)
@@ -396,7 +411,7 @@ public class WebSocketTransport : IMessageTransport
             }
             catch (Exception ex)
             {
-                if (!_cancellationToken.IsCancellationRequested && !_disposed)
+                if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
                     ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex, Info));
                 }
@@ -418,9 +433,9 @@ public class WebSocketTransport : IMessageTransport
 
                 try
                 {
-                    if (_webSocket.State == WebSocketState.Open)
+                    if (webSocket.State == WebSocketState.Open)
                     {
-                        _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server shutdown", CancellationToken.None).Wait(1000);
+                        webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server shutdown", CancellationToken.None).Wait(1000);
                     }
                 }
                 catch (Exception)
@@ -430,7 +445,7 @@ public class WebSocketTransport : IMessageTransport
 
                 try
                 {
-                    _webSocket?.Dispose();
+                    webSocket?.Dispose();
                 }
                 catch (Exception)
                 {
@@ -448,4 +463,6 @@ public class WebSocketTransport : IMessageTransport
             }
         }
     }
+
+    #endregion
 }

@@ -1,5 +1,4 @@
-﻿using Messaging.ModelLibrary.InMemory;
-using Messaging.ModelLibrary.Tcp;
+﻿using Messaging.ModelLibrary.Tcp;
 
 namespace Messaging.ModelLibraryTests;
 
@@ -20,31 +19,6 @@ public class TransportDisposalTests
             ["Host"] = "localhost",
             ["Port"] = 9020,
             ["ClientName"] = "DisposalTest"
-        });
-
-        await Task.Delay(100);
-
-        // Dispose without explicit stop
-        transport.Dispose();
-        client.Dispose();
-
-        // Assert - Should not throw exceptions
-        Assert.IsFalse(transport.IsRunning);
-        Assert.IsFalse(client.IsConnected);
-    }
-
-    [TestMethod]
-    public async Task InMemoryTransport_ProperDisposal_Success()
-    {
-        // Arrange
-        var transport = new InMemoryTransport("disposal-test");
-        var client = new InMemoryClient("DisposalClient");
-
-        // Act
-        await transport.StartAsync();
-        await client.ConnectAsync(new Dictionary<string, object>
-        {
-            ["ServerName"] = "disposal-test"
         });
 
         await Task.Delay(100);

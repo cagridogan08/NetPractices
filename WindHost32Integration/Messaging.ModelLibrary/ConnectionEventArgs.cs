@@ -1,11 +1,6 @@
 ﻿namespace Messaging.ModelLibrary;
 
-public class ConnectionEventArgs : EventArgs
+public class ConnectionEventArgs(ConnectionInfo connection) : EventArgs
 {
-    public ConnectionInfo Connection { get; }
-
-    public ConnectionEventArgs(ConnectionInfo connection)
-    {
-        Connection = connection;
-    }
+    public ConnectionInfo Connection { get; } = connection;
 }

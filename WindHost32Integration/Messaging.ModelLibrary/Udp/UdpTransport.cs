@@ -7,6 +7,8 @@ namespace Messaging.ModelLibrary.Udp;
 
 public class UdpTransport : IMessageTransport
 {
+    #region Fields
+
     private readonly ConcurrentDictionary<string, UdpClientInfo> _connections = new();
     private UdpClient? _udpServer;
     private CancellationTokenSource? _cancellationTokenSource;
@@ -14,15 +16,42 @@ public class UdpTransport : IMessageTransport
     private bool _disposed;
     private IPEndPoint? _localEndPoint;
 
+    #endregion
+
+    #region Events
+
     public event EventHandler<MessageEventArgs>? MessageReceived;
     public event EventHandler<ConnectionEventArgs>? ClientConnected;
     public event EventHandler<ConnectionEventArgs>? ClientDisconnected;
     public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
+    #endregion
+
+    #region Properties
+
     public bool IsRunning { get; private set; }
     public TransportType TransportType => TransportType.Udp;
     public IReadOnlyList<ConnectionInfo> Connections => _connections.Values.Select(c => c.ConnectionInfo).ToList();
 
+    #endregion
+
+    #region Methods
+
+
+    /// <summary>
+    /// Starts a UDP server using the specified configuration settings.
+    /// If an existing server is running, it is stopped before starting a new one.
+    /// 
+    /// Optional configuration dictionary keys:
+    /// - "Host" (string, optional): The IP address or hostname to bind to. 
+    ///   Defaults to "localhost" (binds to IPAddress.Any).
+    /// - "Port" (int, optional): The port number to bind the UDP server to. Defaults to 8080.
+    /// 
+    /// Initializes a UdpClient bound to the given endpoint and starts listening for incoming datagrams asynchronously.
+    /// Raises the ErrorOccurred event if the server fails to start.
+    /// </summary>
+    /// <param name="configuration">Optional dictionary containing UDP server configuration settings.</param>
+    /// <returns>True if the server started successfully; otherwise, false.</returns>
     public async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
     {
         try
@@ -293,6 +322,8 @@ public class UdpTransport : IMessageTransport
             }
         }
     }
+
+    #endregion
 
     private record UdpClientInfo(ConnectionInfo ConnectionInfo, IPEndPoint EndPoint)
     {

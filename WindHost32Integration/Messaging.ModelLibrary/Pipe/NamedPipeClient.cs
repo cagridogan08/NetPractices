@@ -5,21 +5,50 @@ namespace Messaging.ModelLibrary.Pipe;
 
 public class NamedPipeClient : IMessageClient
 {
-    private NamedPipeClientStream _pipeClient;
-    private Task _readTask;
-    private CancellationTokenSource _cancellationTokenSource;
+    #region Fields
+
+    private NamedPipeClientStream? _pipeClient;
+    private Task? _readTask;
+    private CancellationTokenSource? _cancellationTokenSource;
     private bool _disposed;
 
-    public event EventHandler<MessageEventArgs> MessageReceived;
-    public event EventHandler<ConnectionEventArgs> Connected;
-    public event EventHandler<ConnectionEventArgs> Disconnected;
-    public event EventHandler<ErrorEventArgs> ErrorOccurred;
+    #endregion
 
+    #region Events
+
+    public event EventHandler<MessageEventArgs>? MessageReceived;
+    public event EventHandler<ConnectionEventArgs>? Connected;
+    public event EventHandler<ConnectionEventArgs>? Disconnected;
+    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
+
+    #endregion
+
+    #region Properties
     public bool IsConnected => _pipeClient?.IsConnected == true;
-    public ConnectionInfo ConnectionInfo { get; private set; }
+    public ConnectionInfo? ConnectionInfo { get; private set; }
     public TransportType TransportType => TransportType.NamedPipe;
+    #endregion
 
-    public async Task<bool> ConnectAsync(Dictionary<string, object> configuration)
+    #region Methods
+
+    /// <summary>
+    /// Establishes a connection to a named pipe server using the provided configuration settings.
+    /// Disconnects any existing connection before initiating a new one.
+    /// 
+    /// Configuration dictionary keys:
+    /// - "ServerName" (string, optional): The name of the pipe server machine. Use "." for the local machine. Defaults to ".".
+    /// - "PipeName" (string, optional): The name of the pipe to connect to. Defaults to "GenericMessagingApp".
+    /// - "Timeout" (int, optional): Timeout in milliseconds for the connection attempt. Defaults to 5000.
+    /// - "ClientName" (string, optional): The identifier used for this client. Defaults to the current user's name.
+    /// 
+    /// Initializes a NamedPipeClientStream, attempts to connect asynchronously with the given timeout,
+    /// and starts listening for incoming messages.
+    /// Triggers the Connected event on successful connection, or ErrorOccurred on failure.
+    /// </summary>
+    /// <param name="configuration">Dictionary containing named pipe connection configuration.</param>
+    /// <returns>True if the connection was successful; otherwise, false.</returns>
+
+    public async Task<bool> ConnectAsync(Dictionary<string, object>? configuration)
     {
         try
         {
@@ -56,9 +85,6 @@ public class NamedPipeClient : IMessageClient
             return false;
         }
     }
-
-
-
 
     public async Task DisconnectAsync()
     {
@@ -113,9 +139,13 @@ public class NamedPipeClient : IMessageClient
             if (!IsConnected || _disposed) return false;
 
             var json = JsonSerializer.Serialize(message);
-            using var writer = new StreamWriter(_pipeClient, leaveOpen: true);
-            await writer.WriteLineAsync(json);
-            await writer.FlushAsync();
+            if (_pipeClient != null)
+            {
+                await using var writer = new StreamWriter(_pipeClient, leaveOpen: true);
+                await writer.WriteLineAsync(json);
+                await writer.FlushAsync();
+            }
+
             return true;
         }
         catch (ObjectDisposedException)
@@ -137,21 +167,25 @@ public class NamedPipeClient : IMessageClient
     {
         try
         {
-            using var reader = new StreamReader(_pipeClient, leaveOpen: true);
-
-            while (!_cancellationTokenSource.Token.IsCancellationRequested &&
-                   !_disposed &&
-                   _pipeClient.IsConnected &&
-                   await reader.ReadLineAsync() is { } json)
+            if (_pipeClient != null)
             {
-                try
+                using var reader = new StreamReader(_pipeClient, leaveOpen: true);
+
+                while (_cancellationTokenSource is { Token.IsCancellationRequested: false } &&
+                       !_disposed &&
+                       _pipeClient.IsConnected &&
+                       await reader.ReadLineAsync() is { } json)
                 {
-                    var message = JsonSerializer.Deserialize<Message>(json);
-                    MessageReceived?.Invoke(this, new MessageEventArgs(message, ConnectionInfo));
-                }
-                catch (JsonException ex)
-                {
-                    ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex, ConnectionInfo));
+                    try
+                    {
+                        var message = JsonSerializer.Deserialize<Message>(json);
+                        if (message != null && ConnectionInfo is not null)
+                            MessageReceived?.Invoke(this, new MessageEventArgs(message, ConnectionInfo));
+                    }
+                    catch (JsonException ex)
+                    {
+                        ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex, ConnectionInfo));
+                    }
                 }
             }
         }
@@ -169,7 +203,7 @@ public class NamedPipeClient : IMessageClient
         }
         catch (Exception ex)
         {
-            if (!_cancellationTokenSource.Token.IsCancellationRequested && !_disposed)
+            if (_cancellationTokenSource is { Token.IsCancellationRequested: false } && !_disposed)
             {
                 ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex, ConnectionInfo));
             }
@@ -192,4 +226,7 @@ public class NamedPipeClient : IMessageClient
             }
         }
     }
+
+    #endregion
+
 }

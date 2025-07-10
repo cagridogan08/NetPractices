@@ -37,7 +37,21 @@ public class TcpTransport : IMessageTransport
 
     #region Methods
 
-    public async Task<bool> StartAsync(Dictionary<string, object> configuration = null)
+    /// <summary>
+    /// Starts a TCP server using the specified configuration.
+    /// Stops any existing listener before starting a new one.
+    /// 
+    /// Optional configuration dictionary keys:
+    /// - "Host" (string, optional): The IP address or hostname to bind the server to. 
+    ///   Defaults to "localhost" (binds to loopback address).
+    /// - "Port" (int, optional): The port number to listen on. Defaults to 8080.
+    /// 
+    /// Initializes the TCP listener and begins accepting incoming client connections asynchronously.
+    /// Raises the ErrorOccurred event if startup fails.
+    /// </summary>
+    /// <param name="configuration">Optional dictionary of server configuration settings.</param>
+    /// <returns>True if the server started successfully; otherwise, false.</returns>
+    public async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
     {
         try
         {
@@ -114,7 +128,7 @@ public class TcpTransport : IMessageTransport
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message, string connectionId = null)
+    public async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
     {
         try
         {
@@ -154,28 +168,31 @@ public class TcpTransport : IMessageTransport
 
     private async Task RunServerAsync()
     {
-        while (!_cancellationTokenSource.Token.IsCancellationRequested)
+        while (_cancellationTokenSource is { Token.IsCancellationRequested: false })
         {
             try
             {
-                var tcpClient = await _listener.AcceptTcpClientAsync();
-
-                var connectionInfo = new ConnectionInfo
+                if (_listener != null)
                 {
-                    Id = Guid.NewGuid().ToString(),
-                    Name = "Unknown",
-                    Address = tcpClient.Client.RemoteEndPoint?.ToString() ?? "Unknown"
-                };
+                    var tcpClient = await _listener.AcceptTcpClientAsync();
 
-                var clientConnection = new TcpClientConnection(tcpClient, connectionInfo, _cancellationTokenSource.Token);
-                clientConnection.MessageReceived += OnClientMessageReceived;
-                clientConnection.Disconnected += OnClientDisconnected;
-                clientConnection.ErrorOccurred += OnClientErrorOccurred;
+                    var connectionInfo = new ConnectionInfo
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        Name = "Unknown",
+                        Address = tcpClient.Client.RemoteEndPoint?.ToString() ?? "Unknown"
+                    };
 
-                _connections.TryAdd(connectionInfo.Id, clientConnection);
-                ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
+                    var clientConnection = new TcpClientConnection(tcpClient, connectionInfo, _cancellationTokenSource.Token);
+                    clientConnection.MessageReceived += OnClientMessageReceived;
+                    clientConnection.Disconnected += OnClientDisconnected;
+                    clientConnection.ErrorOccurred += OnClientErrorOccurred;
 
-                clientConnection.StartReading();
+                    _connections.TryAdd(connectionInfo.Id, clientConnection);
+                    ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
+
+                    clientConnection.StartReading();
+                }
             }
             catch (ObjectDisposedException)
             {
@@ -196,7 +213,7 @@ public class TcpTransport : IMessageTransport
         }
     }
 
-    private void OnClientMessageReceived(object sender, MessageEventArgs e)
+    private void OnClientMessageReceived(object? sender, MessageEventArgs e)
     {
         // Update connection name if this is the first message
         if (sender is TcpClientConnection connection && connection.Info.Name == "Unknown")
@@ -207,13 +224,13 @@ public class TcpTransport : IMessageTransport
         MessageReceived?.Invoke(this, e);
     }
 
-    private void OnClientDisconnected(object sender, ConnectionEventArgs e)
+    private void OnClientDisconnected(object? sender, ConnectionEventArgs e)
     {
         _connections.TryRemove(e.Connection.Id, out _);
         ClientDisconnected?.Invoke(this, e);
     }
 
-    private void OnClientErrorOccurred(object sender, ErrorEventArgs e)
+    private void OnClientErrorOccurred(object? sender, ErrorEventArgs e)
     {
         ErrorOccurred?.Invoke(this, e);
     }
@@ -237,45 +254,50 @@ public class TcpTransport : IMessageTransport
     #endregion
 
     #region TcpClientConnection
-
-    private class TcpClientConnection : IDisposable
+    private class TcpClientConnection(TcpClient tcpClient, ConnectionInfo info, CancellationToken cancellationToken)
+        : IDisposable
     {
-        private readonly TcpClient _tcpClient;
-        private readonly NetworkStream _stream;
-        private readonly CancellationToken _cancellationToken;
-        private Task _readTask;
+        #region Fields
+
+        private readonly NetworkStream _stream = tcpClient.GetStream();
+        private Task? _readTask;
         private bool _disposed;
 
-        public TcpClientConnection(TcpClient tcpClient, ConnectionInfo info, CancellationToken cancellationToken)
-        {
-            _tcpClient = tcpClient;
-            _stream = tcpClient.GetStream();
-            Info = info;
-            _cancellationToken = cancellationToken;
-        }
+        #endregion
 
-        public ConnectionInfo Info { get; }
+        #region Events
 
-        public event EventHandler<MessageEventArgs> MessageReceived;
-        public event EventHandler<ConnectionEventArgs> Disconnected;
-        public event EventHandler<ErrorEventArgs> ErrorOccurred;
+        public event EventHandler<MessageEventArgs>? MessageReceived;
+        public event EventHandler<ConnectionEventArgs>? Disconnected;
+        public event EventHandler<ErrorEventArgs>? ErrorOccurred;
+
+        #endregion
+
+        #region Properties
+
+        public ConnectionInfo Info { get; } = info;
+
+
+        #endregion
+
+        #region Methods
 
         public void StartReading()
         {
-            _readTask = Task.Run(ReadMessagesAsync, _cancellationToken);
+            _readTask = Task.Run(ReadMessagesAsync, cancellationToken);
         }
 
         public async Task<bool> SendMessageAsync(Message message)
         {
             try
             {
-                if (_disposed || !_tcpClient.Connected)
+                if (_disposed || !tcpClient.Connected)
                     return false;
 
                 var json = JsonSerializer.Serialize(message);
                 var data = System.Text.Encoding.UTF8.GetBytes(json + "\n");
 
-                await _stream.WriteAsync(data, _cancellationToken);
+                await _stream.WriteAsync(data, cancellationToken);
                 await _stream.FlushAsync();
                 return true;
             }
@@ -300,9 +322,9 @@ public class TcpTransport : IMessageTransport
             {
                 using var reader = new StreamReader(_stream, System.Text.Encoding.UTF8, leaveOpen: true);
 
-                while (!_cancellationToken.IsCancellationRequested &&
+                while (!cancellationToken.IsCancellationRequested &&
                        !_disposed &&
-                       _tcpClient.Connected &&
+                       tcpClient.Connected &&
                        await reader.ReadLineAsync() is { } json)
                 {
                     try
@@ -310,7 +332,7 @@ public class TcpTransport : IMessageTransport
                         if (!string.IsNullOrWhiteSpace(json))
                         {
                             var message = JsonSerializer.Deserialize<Message>(json);
-                            MessageReceived?.Invoke(this, new MessageEventArgs(message, Info));
+                            if (message != null) MessageReceived?.Invoke(this, new MessageEventArgs(message, Info));
                         }
                     }
                     catch (JsonException ex)
@@ -333,7 +355,7 @@ public class TcpTransport : IMessageTransport
             }
             catch (Exception ex)
             {
-                if (!_cancellationToken.IsCancellationRequested && !_disposed)
+                if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
                     ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex, Info));
                 }
@@ -356,7 +378,7 @@ public class TcpTransport : IMessageTransport
                 try
                 {
                     _stream?.Close();
-                    _tcpClient?.Close();
+                    tcpClient?.Close();
                 }
                 catch (Exception)
                 {
@@ -366,7 +388,7 @@ public class TcpTransport : IMessageTransport
                 try
                 {
                     _stream?.Dispose();
-                    _tcpClient?.Dispose();
+                    tcpClient?.Dispose();
                 }
                 catch (Exception)
                 {
@@ -384,6 +406,8 @@ public class TcpTransport : IMessageTransport
             }
         }
     }
+
+    #endregion
 
 
     #endregion

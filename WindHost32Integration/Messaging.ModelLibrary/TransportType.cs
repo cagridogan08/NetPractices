@@ -7,5 +7,8 @@ public enum TransportType
     Udp,
     SignalR,
     WebSocket,
-    InMemory
+    InMemory,
+    gRPC,
+    RabbitMQ,
+    Rtp
 }

@@ -4,29 +4,36 @@ using System.Text.Json;
 
 namespace Messaging.ModelLibrary.Pipe;
 
-public class NamedPipeTransport : IMessageTransport
+public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : IMessageTransport
 {
-    private readonly string _pipeName;
+    #region Fields
+
     private readonly ConcurrentDictionary<string, ClientConnection> _connections = new();
-    private CancellationTokenSource _cancellationTokenSource;
-    private Task _serverTask;
+    private CancellationTokenSource? _cancellationTokenSource;
+    private Task? _serverTask;
     private bool _disposed;
 
-    public NamedPipeTransport(string pipeName = "GenericMessagingApp")
-    {
-        _pipeName = pipeName;
-    }
+    #endregion
 
-    public event EventHandler<MessageEventArgs> MessageReceived;
-    public event EventHandler<ConnectionEventArgs> ClientConnected;
-    public event EventHandler<ConnectionEventArgs> ClientDisconnected;
-    public event EventHandler<ErrorEventArgs> ErrorOccurred;
+    #region Events
+
+    public event EventHandler<MessageEventArgs>? MessageReceived;
+    public event EventHandler<ConnectionEventArgs>? ClientConnected;
+    public event EventHandler<ConnectionEventArgs>? ClientDisconnected;
+    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
+
+    #endregion
+
+    #region Properties
 
     public bool IsRunning { get; private set; }
     public TransportType TransportType => TransportType.NamedPipe;
     public IReadOnlyList<ConnectionInfo> Connections => _connections.Values.Select(c => c.Info).ToList();
 
-    public async Task<bool> StartAsync(Dictionary<string, object> configuration = null)
+    #endregion
+
+    #region Methods
+    public async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
     {
         try
         {
@@ -87,7 +94,7 @@ public class NamedPipeTransport : IMessageTransport
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message, string connectionId = null)
+    public async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
     {
         try
         {
@@ -127,13 +134,13 @@ public class NamedPipeTransport : IMessageTransport
 
     private async Task RunServerAsync()
     {
-        while (!_cancellationTokenSource.Token.IsCancellationRequested)
+        while (_cancellationTokenSource is { Token.IsCancellationRequested: false })
         {
             NamedPipeServerStream? pipeServer = null;
             try
             {
                 pipeServer = new NamedPipeServerStream(
-                    _pipeName,
+                    pipeName,
                     PipeDirection.InOut,
                     NamedPipeServerStream.MaxAllowedServerInstances,
                     PipeTransmissionMode.Byte,
@@ -145,7 +152,7 @@ public class NamedPipeTransport : IMessageTransport
                 {
                     Id = Guid.NewGuid().ToString(),
                     Name = "Unknown",
-                    Address = _pipeName
+                    Address = pipeName
                 };
 
                 var clientConnection = new ClientConnection(pipeServer, connectionInfo, _cancellationTokenSource.Token);
@@ -176,7 +183,7 @@ public class NamedPipeTransport : IMessageTransport
     private void OnClientMessageReceived(object? sender, MessageEventArgs e)
     {
         // Update connection name if this is the first message
-        if (sender is ClientConnection connection && connection.Info.Name == "Unknown")
+        if (sender is ClientConnection { Info.Name: "Unknown" } connection)
         {
             connection.Info.Name = e.Message.Sender;
         }
@@ -212,40 +219,35 @@ public class NamedPipeTransport : IMessageTransport
         }
     }
 
-    private class ClientConnection : IDisposable
+    #endregion
+
+    #region ClientConnectionHandler
+    private class ClientConnection(NamedPipeServerStream pipe, ConnectionInfo info, CancellationToken cancellationToken)
+        : IDisposable
     {
-        private readonly NamedPipeServerStream _pipe;
-        private readonly CancellationToken _cancellationToken;
-        private Task _readTask;
+        private Task? _readTask;
         private bool _disposed;
 
-        public ClientConnection(NamedPipeServerStream pipe, ConnectionInfo info, CancellationToken cancellationToken)
-        {
-            _pipe = pipe;
-            Info = info;
-            _cancellationToken = cancellationToken;
-        }
+        public ConnectionInfo Info { get; } = info;
 
-        public ConnectionInfo Info { get; }
-
-        public event EventHandler<MessageEventArgs> MessageReceived;
-        public event EventHandler<ConnectionEventArgs> Disconnected;
-        public event EventHandler<ErrorEventArgs> ErrorOccurred;
+        public event EventHandler<MessageEventArgs>? MessageReceived;
+        public event EventHandler<ConnectionEventArgs>? Disconnected;
+        public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
         public void StartReading()
         {
-            _readTask = Task.Run(ReadMessagesAsync, _cancellationToken);
+            _readTask = Task.Run(ReadMessagesAsync, cancellationToken);
         }
 
         public async Task<bool> SendMessageAsync(Message message)
         {
             try
             {
-                if (_disposed || !_pipe.IsConnected)
+                if (_disposed || !pipe.IsConnected)
                     return false;
 
                 var json = JsonSerializer.Serialize(message);
-                using var writer = new StreamWriter(_pipe, leaveOpen: true);
+                await using var writer = new StreamWriter(pipe, leaveOpen: true);
                 await writer.WriteLineAsync(json);
                 await writer.FlushAsync();
                 return true;
@@ -269,18 +271,17 @@ public class NamedPipeTransport : IMessageTransport
         {
             try
             {
-                using var reader = new StreamReader(_pipe, leaveOpen: true);
-                string json;
+                using var reader = new StreamReader(pipe, leaveOpen: true);
 
-                while (!_cancellationToken.IsCancellationRequested &&
+                while (!cancellationToken.IsCancellationRequested &&
                        !_disposed &&
-                       _pipe.IsConnected &&
-                       (json = await reader.ReadLineAsync()) != null)
+                       pipe.IsConnected &&
+                       await reader.ReadLineAsync() is { } json)
                 {
                     try
                     {
                         var message = JsonSerializer.Deserialize<Message>(json);
-                        MessageReceived?.Invoke(this, new MessageEventArgs(message, Info));
+                        if (message != null) MessageReceived?.Invoke(this, new MessageEventArgs(message, Info));
                     }
                     catch (JsonException ex)
                     {
@@ -302,7 +303,7 @@ public class NamedPipeTransport : IMessageTransport
             }
             catch (Exception ex)
             {
-                if (!_cancellationToken.IsCancellationRequested && !_disposed)
+                if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
                     ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex, Info));
                 }
@@ -324,8 +325,8 @@ public class NamedPipeTransport : IMessageTransport
 
                 try
                 {
-                    _pipe?.Close();
-                    _pipe?.Dispose();
+                    pipe.Close();
+                    pipe.Dispose();
                 }
                 catch (Exception)
                 {
@@ -343,4 +344,6 @@ public class NamedPipeTransport : IMessageTransport
             }
         }
     }
+
+    #endregion
 }

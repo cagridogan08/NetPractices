@@ -1,16 +1,10 @@
 ﻿
 namespace Messaging.ModelLibrary;
 
-public class ErrorEventArgs : EventArgs
+public class ErrorEventArgs(string error, Exception? exception = null, ConnectionInfo? connection = null)
+    : EventArgs
 {
-    public string Error { get; }
-    public Exception Exception { get; }
-    public ConnectionInfo Connection { get; }
-
-    public ErrorEventArgs(string error, Exception exception = null, ConnectionInfo connection = null)
-    {
-        Error = error;
-        Exception = exception;
-        Connection = connection;
-    }
+    public string Error { get; } = error;
+    public Exception Exception { get; } = exception;
+    public ConnectionInfo Connection { get; } = connection;
 }

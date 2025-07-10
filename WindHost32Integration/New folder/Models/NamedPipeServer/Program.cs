@@ -1,10 +1,9 @@
 ﻿using System;
 using System.IO;
 using System.IO.Pipes;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Text;
 using Messaging.ModelLibrary;
+using Messaging.ModelLibrary.Pipe;
 
 namespace NamedPipeServer
 {
@@ -16,7 +15,7 @@ namespace NamedPipeServer
         static async Task Main(string[] args)
         {
             _messagingService = new Messaging.ModelLibrary.MessagingService();
-            var server = new Messaging.ModelLibrary.NamedPipeTransport(PipeName);
+            var server = new NamedPipeTransport(PipeName);
             var configuration = new Dictionary<string, object>
             {
                 ["PipeName"] = PipeName,

@@ -8,21 +8,53 @@ namespace Messaging.ModelLibrary.WebSocket;
 
 public class WebSocketMessageClient : IMessageClient
 {
+    #region Fields
+
     private ClientWebSocket? _webSocket;
     private Task? _readTask;
-    private CancellationTokenSource _cancellationTokenSource;
+    private CancellationTokenSource? _cancellationTokenSource;
     private bool _disposed;
+
+    #endregion
+
+    #region Events
 
     public event EventHandler<MessageEventArgs>? MessageReceived;
     public event EventHandler<ConnectionEventArgs>? Connected;
     public event EventHandler<ConnectionEventArgs>? Disconnected;
     public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
+    #endregion
+
+    #region Properties
+
     public bool IsConnected => _webSocket?.State == WebSocketState.Open;
-    public ConnectionInfo ConnectionInfo { get; private set; }
+    public ConnectionInfo? ConnectionInfo { get; private set; }
     public TransportType TransportType => TransportType.WebSocket;
 
-    public async Task<bool> ConnectAsync(Dictionary<string, object> configuration)
+    #endregion
+
+    #region Methods
+
+    /// <summary>
+    /// Establishes a WebSocket connection to the specified server using the provided configuration settings.
+    /// Closes any existing connection before initiating a new one.
+    /// 
+    /// Configuration dictionary keys:
+    /// - "Host" (string, optional): The remote host to connect to. Defaults to "localhost".
+    /// - "Port" (int, optional): The port number to connect to. Defaults to 8080.
+    /// - "Path" (string, optional): The URI path to connect to. Defaults to "/".
+    /// - "UseSSL" (bool, optional): Whether to use a secure WebSocket connection (wss). Defaults to false.
+    /// - "Timeout" (int, optional): Connection timeout in milliseconds. Defaults to 5000.
+    /// - "ClientName" (string, optional): A name used to identify the client. Defaults to the current user's name.
+    /// 
+    /// Builds the connection URI, creates and connects a ClientWebSocket, and begins listening for messages asynchronously.
+    /// Triggers the Connected event on success or ErrorOccurred on failure.
+    /// </summary>
+    /// <param name="configuration">Dictionary containing WebSocket connection configuration options.</param>
+    /// <returns>True if the connection is successfully established; otherwise, false.</returns>
+
+    public async Task<bool> ConnectAsync(Dictionary<string, object>? configuration)
     {
         try
         {
@@ -126,7 +158,8 @@ public class WebSocketMessageClient : IMessageClient
             var buffer = Encoding.UTF8.GetBytes(json);
             var segment = new ArraySegment<byte>(buffer);
 
-            await _webSocket.SendAsync(segment, WebSocketMessageType.Text, true, _cancellationTokenSource.Token);
+            if (_webSocket is not null && _cancellationTokenSource != null)
+                await _webSocket.SendAsync(segment, WebSocketMessageType.Text, true, _cancellationTokenSource.Token);
             return true;
         }
         catch (ObjectDisposedException)
@@ -154,32 +187,36 @@ public class WebSocketMessageClient : IMessageClient
 
         try
         {
-            while (!_cancellationTokenSource.Token.IsCancellationRequested &&
+            while (_cancellationTokenSource is { Token.IsCancellationRequested: false } &&
                    !_disposed &&
                    IsConnected)
             {
-                var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cancellationTokenSource.Token);
-
-                if (result.MessageType == WebSocketMessageType.Text)
+                if (_webSocket != null)
                 {
-                    var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cancellationTokenSource.Token);
 
-                    try
+                    if (result.MessageType == WebSocketMessageType.Text)
                     {
-                        if (!string.IsNullOrWhiteSpace(json))
+                        var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
+
+                        try
                         {
-                            var message = JsonSerializer.Deserialize<Message>(json);
-                            MessageReceived?.Invoke(this, new MessageEventArgs(message, ConnectionInfo));
+                            if (!string.IsNullOrWhiteSpace(json))
+                            {
+                                var message = JsonSerializer.Deserialize<Message>(json);
+                                if (message != null && ConnectionInfo is not null)
+                                    MessageReceived?.Invoke(this, new MessageEventArgs(message, ConnectionInfo));
+                            }
+                        }
+                        catch (JsonException ex)
+                        {
+                            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex, ConnectionInfo));
                         }
                     }
-                    catch (JsonException ex)
+                    else if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex, ConnectionInfo));
+                        break;
                     }
-                }
-                else if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    break;
                 }
             }
         }
@@ -197,7 +234,7 @@ public class WebSocketMessageClient : IMessageClient
         }
         catch (Exception ex)
         {
-            if (!_cancellationTokenSource.Token.IsCancellationRequested && !_disposed)
+            if (_cancellationTokenSource is { Token.IsCancellationRequested: false } && !_disposed)
             {
                 ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex, ConnectionInfo));
             }
@@ -220,4 +257,6 @@ public class WebSocketMessageClient : IMessageClient
             }
         }
     }
+    #endregion
+
 }

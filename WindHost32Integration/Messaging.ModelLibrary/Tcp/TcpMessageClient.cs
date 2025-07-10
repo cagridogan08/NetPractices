@@ -55,7 +55,21 @@ public class TcpMessageClient : IMessageClient
         }
     }
 
-    public async Task<bool> ConnectAsync(Dictionary<string, object> configuration)
+    /// <summary>
+    /// Attempts to establish a TCP connection using the provided configuration settings.
+    /// Disconnects any existing connection before initiating a new one.
+    /// 
+    /// Required/Optional configuration dictionary keys:
+    /// - "Host" (string, optional): The target host to connect to. Defaults to "localhost".
+    /// - "Port" (int, optional): The port number to connect to. Defaults to 8080.
+    /// - "Timeout" (int, optional): Connection timeout in milliseconds. Defaults to 5000.
+    /// - "ClientName" (string, optional): The name used to identify the client. Defaults to the current user's name.
+    /// 
+    /// Raises the Connected event on successful connection, or ErrorOccurred on failure.
+    /// </summary>
+    /// <param name="configuration">Dictionary containing optional connection settings.</param>
+    /// <returns>True if the connection was successful; otherwise, false.</returns>
+    public async Task<bool> ConnectAsync(Dictionary<string, object>? configuration)
     {
         try
         {

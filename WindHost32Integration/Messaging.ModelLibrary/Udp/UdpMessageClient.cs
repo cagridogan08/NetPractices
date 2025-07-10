@@ -42,23 +42,22 @@ public class UdpMessageClient : IMessageClient
 
     #region Methods
 
-    public void Dispose()
-    {
-        if (!_disposed)
-        {
-            _disposed = true;
-            try
-            {
-                DisconnectAsync().Wait(2000);
-            }
-            catch (Exception)
-            {
-                /*Ignore dispose errors */
-            }
-        }
-    }
-
-
+    /// <summary>
+    /// Establishes a UDP "connection" (logical setup) to a remote endpoint using the specified configuration settings.
+    /// Binds a local UDP client to the specified local port and prepares to send/receive messages.
+    /// 
+    /// Required/optional configuration dictionary keys:
+    /// - "Host" (string, optional): The remote host to connect to. Defaults to "localhost".
+    /// - "Port" (int, optional): The remote port to send messages to. Defaults to 11000.
+    /// - "LocalPort" (int, optional): The local UDP port to bind to. Defaults to 0 (random available port).
+    /// - "ClientName" (string, optional): Name used to identify this client. Defaults to the current user's name.
+    /// 
+    /// Starts listening for incoming UDP messages asynchronously.
+    /// Triggers the Connected event on success, and sends an initial "CONNECT" message to the remote server.
+    /// Triggers the ErrorOccurred event if the connection setup fails.
+    /// </summary>
+    /// <param name="configuration">Dictionary containing UDP client connection configuration settings.</param>
+    /// <returns>True if the client was set up successfully; otherwise, false.</returns>
     public async Task<bool> ConnectAsync(Dictionary<string, object> configuration)
     {
         try
@@ -175,7 +174,7 @@ public class UdpMessageClient : IMessageClient
                 {
                     _udpClient?.Dispose();
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     /*Ignore*/
                 }
@@ -219,6 +218,24 @@ public class UdpMessageClient : IMessageClient
             return false;
         }
     }
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _disposed = true;
+            try
+            {
+                DisconnectAsync().Wait(2000);
+            }
+            catch (Exception)
+            {
+                /*Ignore dispose errors */
+            }
+        }
+    }
+
+
 
     #endregion
 
