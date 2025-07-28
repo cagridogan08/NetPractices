@@ -6,18 +6,19 @@ namespace Messaging.ModelLibrary.Broker;
 /// <summary>
 /// Central message broker that coordinates client-to-client communication across transports
 /// </summary>
-public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
+public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager, IDisposable
 {
     #region Fields
-
     private readonly ConcurrentDictionary<string, IMessageTransport> _transports = new();
     private readonly ConcurrentDictionary<string, ClientInfo> _clients = new();
     private readonly ConcurrentDictionary<string, HashSet<string>> _groups = new();
     private readonly ConcurrentDictionary<string, HashSet<string>> _clientGroups = new();
     private readonly ConcurrentDictionary<string, string> _clientToTransport = new();
+    private readonly ConcurrentDictionary<string, DateTime> _clientHeartbeats = new();
     private readonly IMessageStore? _messageStore;
+    private readonly Timer _heartbeatTimer;
+    private readonly object _lockObject = new();
     private bool _disposed;
-
     #endregion
 
     #region Events
@@ -31,77 +32,91 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
     public MessageBroker(IMessageStore? messageStore = null)
     {
         _messageStore = messageStore;
+        _heartbeatTimer = new Timer(CleanupStaleClients, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
     }
     #endregion
 
     #region Transport Management
     public void RegisterTransport(IMessageTransport transport)
     {
-        var transportId = $"{transport.TransportType}_{Guid.NewGuid()}";
-        _transports[transportId] = transport;
+        lock (_lockObject)
+        {
+            var transportId = $"{transport.TransportType}_{Guid.NewGuid()}";
+            _transports[transportId] = transport;
 
-        // Subscribe to transport events
-        transport.ClientConnected += OnTransportClientConnected;
-        transport.ClientDisconnected += OnTransportClientDisconnected;
-        transport.MessageReceived += OnTransportMessageReceived;
-        transport.ErrorOccurred += OnTransportErrorOccurred;
+            // Subscribe to transport events
+            transport.ClientConnected += OnTransportClientConnected;
+            transport.ClientDisconnected += OnTransportClientDisconnected;
+            transport.MessageReceived += OnTransportMessageReceived;
+            transport.ErrorOccurred += OnTransportErrorOccurred;
+        }
     }
 
     public void UnregisterTransport(IMessageTransport transport)
     {
-        var transportToRemove = _transports.FirstOrDefault(kvp => kvp.Value == transport);
-        if (transportToRemove.Key != null)
+        lock (_lockObject)
         {
-            _transports.TryRemove(transportToRemove.Key, out _);
-
-            // Unsubscribe from transport events
-            transport.ClientConnected -= OnTransportClientConnected;
-            transport.ClientDisconnected -= OnTransportClientDisconnected;
-            transport.MessageReceived -= OnTransportMessageReceived;
-            transport.ErrorOccurred -= OnTransportErrorOccurred;
-
-            // Remove clients from this transport
-            var clientsToRemove = _clientToTransport
-                .Where(kvp => kvp.Value == transportToRemove.Key)
-                .Select(kvp => kvp.Key)
-                .ToList();
-
-            foreach (var clientId in clientsToRemove)
+            var transportToRemove = _transports.FirstOrDefault(kvp => kvp.Value == transport);
+            if (transportToRemove.Key != null)
             {
-                _clientToTransport.TryRemove(clientId, out _);
-                if (_clients.TryRemove(clientId, out var client))
+                _transports.TryRemove(transportToRemove.Key, out _);
+
+                // Unsubscribe from transport events
+                transport.ClientConnected -= OnTransportClientConnected;
+                transport.ClientDisconnected -= OnTransportClientDisconnected;
+                transport.MessageReceived -= OnTransportMessageReceived;
+                transport.ErrorOccurred -= OnTransportErrorOccurred;
+
+                // Remove clients from this transport
+                var clientsToRemove = _clientToTransport
+                    .Where(kvp => kvp.Value == transportToRemove.Key)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+
+                foreach (var clientId in clientsToRemove)
                 {
-                    ClientDisconnected?.Invoke(this, new ClientDiscoveryEventArgs(client, false));
+                    RemoveClientFromBroker(clientId);
                 }
             }
         }
     }
     #endregion
 
-    #region Message Routing
+    #region Enhanced Message Routing
     public async Task<bool> RouteMessageAsync(Message message, IMessageTransport sourceTransport)
     {
         try
         {
+            // Validate message
+            if (!ValidateMessage(message))
+            {
+                await SendErrorMessageAsync(message.Sender, "Invalid message format", sourceTransport);
+                return false;
+            }
+
             // Store message if store is available
             if (_messageStore != null)
             {
                 await _messageStore.StoreMessageAsync(message);
             }
 
-            // Handle different message types
-            switch (message.Receiver)
+            // Update sender heartbeat
+            UpdateClientHeartbeat(message.Sender);
+
+            // Route based on message type and receiver
+            var success = message.Receiver switch
             {
-                case "*": // Broadcast
-                    return await BroadcastMessageAsync(message, sourceTransport);
+                "*" => await BroadcastMessageAsync(message, sourceTransport),
+                var receiver when receiver.StartsWith("group:") => await RouteGroupMessageAsync(receiver.Substring(6), message, sourceTransport),
+                _ => await RouteDirectMessageAsync(message, sourceTransport)
+            };
 
-                case var receiver when receiver.StartsWith("group:"):
-                    var groupName = receiver.Substring(6);
-                    return await RouteGroupMessageAsync(groupName, message, sourceTransport);
-
-                default: // Direct message
-                    return await RouteDirectMessageAsync(message, sourceTransport);
+            if (success)
+            {
+                MessageRouted?.Invoke(this, new MessageEventArgs(message));
             }
+
+            return success;
         }
         catch (Exception ex)
         {
@@ -112,15 +127,14 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
 
     private async Task<bool> RouteDirectMessageAsync(Message message, IMessageTransport sourceTransport)
     {
-        // Find the target client
-        if (!_clients.TryGetValue(message.Receiver, out _))
+        // Check if target client exists and is online
+        if (!_clients.TryGetValue(message.Receiver, out var targetClient) || !targetClient.IsOnline)
         {
-            // Client not found, send error back to sender
-            await SendErrorMessageAsync(message.Sender, $"Client '{message.Receiver}' not found", sourceTransport);
+            await SendErrorMessageAsync(message.Sender, $"Client '{message.Receiver}' is not available", sourceTransport);
             return false;
         }
 
-        // Find the transport for the target client
+        // Find target transport
         if (!_clientToTransport.TryGetValue(message.Receiver, out var transportId) ||
             !_transports.TryGetValue(transportId, out var targetTransport))
         {
@@ -128,7 +142,7 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
             return false;
         }
 
-        // Route message to target transport
+        // Send message to target
         var success = await targetTransport.SendMessageAsync(message, message.Receiver);
 
         // Send acknowledgment if requested
@@ -137,9 +151,10 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
             await SendAcknowledgmentAsync(message, success, sourceTransport);
         }
 
-        if (success)
+        // Mark as delivered in store
+        if (success && _messageStore != null)
         {
-            MessageRouted?.Invoke(this, new MessageEventArgs(message));
+            await _messageStore.MarkMessageAsDeliveredAsync(message.Id);
         }
 
         return success;
@@ -148,14 +163,17 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
     private async Task<bool> BroadcastMessageAsync(Message message, IMessageTransport sourceTransport)
     {
         var tasks = new List<Task<bool>>();
+        var sourceTransportId = _transports.FirstOrDefault(kvp => kvp.Value == sourceTransport).Key;
 
-        foreach (var transport in _transports.Values)
+        foreach (var kvp in _transports)
         {
-            if (transport != sourceTransport) // Don't send back to source
+            if (kvp.Key != sourceTransportId) // Don't send back to source transport
             {
-                tasks.Add(transport.BroadcastMessageAsync(message));
+                tasks.Add(kvp.Value.BroadcastMessageAsync(message));
             }
         }
+
+        if (tasks.Count == 0) return false;
 
         var results = await Task.WhenAll(tasks);
         return results.Any(r => r);
@@ -163,46 +181,40 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
 
     private async Task<bool> RouteGroupMessageAsync(string groupName, Message message, IMessageTransport sourceTransport)
     {
-        if (!_groups.TryGetValue(groupName, out var groupMembers))
+        if (!_groups.TryGetValue(groupName, out var groupMembers) || groupMembers.Count == 0)
         {
-            await SendErrorMessageAsync(message.Sender, $"Group '{groupName}' not found", sourceTransport);
+            await SendErrorMessageAsync(message.Sender, $"Group '{groupName}' not found or empty", sourceTransport);
             return false;
         }
 
         var tasks = new List<Task<bool>>();
+        var successCount = 0;
 
-        foreach (var memberId in groupMembers)
+        foreach (var memberId in groupMembers.Where(id => id != message.Sender))
         {
-            if (memberId != message.Sender && // Don't send to sender
-                _clientToTransport.TryGetValue(memberId, out var transportId) &&
-                _transports.TryGetValue(transportId, out var transport))
+            if (_clientToTransport.TryGetValue(memberId, out var transportId) &&
+                _transports.TryGetValue(transportId, out var transport) &&
+                _clients.TryGetValue(memberId, out var client) && client.IsOnline)
             {
-                var groupMessage = new Message
-                {
-                    Id = message.Id,
-                    Content = message.Content,
-                    Sender = message.Sender,
-                    Receiver = memberId,
-                    Type = message.Type,
-                    Timestamp = message.Timestamp,
-                    Metadata = new Dictionary<string, object>(message.Metadata)
-                    {
-                        ["GroupName"] = groupName,
-                        ["IsGroupMessage"] = true
-                    }
-                };
-
+                var groupMessage = CreateGroupMessage(message, groupName, memberId);
                 tasks.Add(transport.SendMessageAsync(groupMessage, memberId));
             }
         }
 
-        var results = await Task.WhenAll(tasks);
-        return results.Any(r => r);
+        if (tasks.Count > 0)
+        {
+            var results = await Task.WhenAll(tasks);
+            successCount = results.Count(r => r);
+        }
+
+        return successCount > 0;
     }
 
     public async Task<bool> CanRouteToClientAsync(string clientId, IMessageTransport transport)
     {
-        return _clients.ContainsKey(clientId) && _clientToTransport.ContainsKey(clientId);
+        return _clients.ContainsKey(clientId) &&
+               _clientToTransport.ContainsKey(clientId) &&
+               _clients[clientId].IsOnline;
     }
     #endregion
 
@@ -225,29 +237,20 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
 
     public async Task RegisterClientAsync(ClientInfo client)
     {
-        _clients[client.Id] = client;
+        lock (_lockObject)
+        {
+            client.IsOnline = true;
+            client.LastSeen = DateTime.UtcNow;
+            _clients[client.Id] = client;
+            UpdateClientHeartbeat(client.Id);
+        }
+
         ClientDiscovered?.Invoke(this, new ClientDiscoveryEventArgs(client, true));
     }
 
     public async Task UnregisterClientAsync(string clientId)
     {
-        if (_clients.TryRemove(clientId, out var client))
-        {
-            _clientToTransport.TryRemove(clientId, out _);
-
-            // Remove from all groups
-            var groupsToUpdate = _clientGroups.GetValueOrDefault(clientId, new HashSet<string>());
-            foreach (var groupName in groupsToUpdate)
-            {
-                if (_groups.TryGetValue(groupName, out var groupMembers))
-                {
-                    groupMembers.Remove(clientId);
-                }
-            }
-            _clientGroups.TryRemove(clientId, out _);
-
-            ClientDisconnected?.Invoke(this, new ClientDiscoveryEventArgs(client, false));
-        }
+        RemoveClientFromBroker(clientId);
     }
 
     public async Task UpdateClientPresenceAsync(string clientId, DateTime lastSeen)
@@ -255,40 +258,47 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
         if (_clients.TryGetValue(clientId, out var client))
         {
             client.LastSeen = lastSeen;
-            client.IsOnline = DateTime.UtcNow.Subtract(lastSeen).TotalMinutes < 5; // Consider offline after 5 minutes
+            client.IsOnline = DateTime.UtcNow.Subtract(lastSeen).TotalMinutes < 5;
+            UpdateClientHeartbeat(clientId);
         }
     }
     #endregion
 
-    #region Group Management
+    #region Group Management  
     public async Task<bool> CreateGroupAsync(string groupName, string creatorId)
     {
-        if (_groups.ContainsKey(groupName))
-            return false;
-
-        _groups[groupName] = new HashSet<string> { creatorId };
-
-        if (!_clientGroups.TryGetValue(creatorId, out var clientGroups))
+        lock (_lockObject)
         {
-            clientGroups = new HashSet<string>();
-            _clientGroups[creatorId] = clientGroups;
+            if (_groups.ContainsKey(groupName))
+                return false;
+
+            _groups[groupName] = new HashSet<string> { creatorId };
+
+            if (!_clientGroups.TryGetValue(creatorId, out var clientGroups))
+            {
+                clientGroups = new HashSet<string>();
+                _clientGroups[creatorId] = clientGroups;
+            }
+            clientGroups.Add(groupName);
         }
-        clientGroups.Add(groupName);
 
         return true;
     }
 
     public async Task<bool> DeleteGroupAsync(string groupName)
     {
-        if (!_groups.TryRemove(groupName, out var members))
-            return false;
-
-        // Remove group from all member's group lists
-        foreach (var memberId in members)
+        lock (_lockObject)
         {
-            if (_clientGroups.TryGetValue(memberId, out var memberGroups))
+            if (!_groups.TryRemove(groupName, out var members))
+                return false;
+
+            // Remove group from all member's group lists
+            foreach (var memberId in members)
             {
-                memberGroups.Remove(groupName);
+                if (_clientGroups.TryGetValue(memberId, out var memberGroups))
+                {
+                    memberGroups.Remove(groupName);
+                }
             }
         }
 
@@ -297,46 +307,50 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
 
     public async Task<bool> JoinGroupAsync(string groupName, string clientId)
     {
-        if (!_groups.TryGetValue(groupName, out var groupMembers))
+        lock (_lockObject)
         {
-            // Auto-create group if it doesn't exist
-            groupMembers = new HashSet<string>();
-            _groups[groupName] = groupMembers;
-        }
+            if (!_groups.TryGetValue(groupName, out var groupMembers))
+            {
+                groupMembers = new HashSet<string>();
+                _groups[groupName] = groupMembers;
+            }
 
-        groupMembers.Add(clientId);
+            groupMembers.Add(clientId);
 
-        if (!_clientGroups.TryGetValue(clientId, out var clientGroups))
-        {
-            clientGroups = new HashSet<string>();
-            _clientGroups[clientId] = clientGroups;
+            if (!_clientGroups.TryGetValue(clientId, out var clientGroups))
+            {
+                clientGroups = new HashSet<string>();
+                _clientGroups[clientId] = clientGroups;
+            }
+            clientGroups.Add(groupName);
         }
-        clientGroups.Add(groupName);
 
         return true;
     }
 
     public async Task<bool> LeaveGroupAsync(string groupName, string clientId)
     {
-        var success = false;
-
-        if (_groups.TryGetValue(groupName, out var groupMembers))
+        lock (_lockObject)
         {
-            success = groupMembers.Remove(clientId);
+            var success = false;
 
-            // Remove empty groups
-            if (groupMembers.Count == 0)
+            if (_groups.TryGetValue(groupName, out var groupMembers))
             {
-                _groups.TryRemove(groupName, out _);
+                success = groupMembers.Remove(clientId);
+
+                if (groupMembers.Count == 0)
+                {
+                    _groups.TryRemove(groupName, out _);
+                }
             }
-        }
 
-        if (_clientGroups.TryGetValue(clientId, out var clientGroups))
-        {
-            clientGroups.Remove(groupName);
-        }
+            if (_clientGroups.TryGetValue(clientId, out var clientGroups))
+            {
+                clientGroups.Remove(groupName);
+            }
 
-        return success;
+            return success;
+        }
     }
 
     public async Task<IReadOnlyList<string>> GetGroupMembersAsync(string groupName)
@@ -359,7 +373,6 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
 
     public async Task<bool> SendGroupMessageAsync(string groupName, Message message)
     {
-        // This is handled by RouteGroupMessageAsync
         message.Receiver = $"group:{groupName}";
         return await RouteMessageAsync(message, null!);
     }
@@ -411,6 +424,38 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
     #endregion
 
     #region Helper Methods
+    private bool ValidateMessage(Message message)
+    {
+        return !string.IsNullOrEmpty(message.Id) &&
+               !string.IsNullOrEmpty(message.Sender) &&
+               !string.IsNullOrEmpty(message.Receiver) &&
+               (!message.ExpiresIn.HasValue || message.Timestamp.Add(message.ExpiresIn.Value) >= DateTime.UtcNow);
+    }
+
+    private Message CreateGroupMessage(Message originalMessage, string groupName, string receiverId)
+    {
+        return new Message
+        {
+            Id = originalMessage.Id,
+            Content = originalMessage.Content,
+            Sender = originalMessage.Sender,
+            Receiver = receiverId,
+            Type = originalMessage.Type,
+            Timestamp = originalMessage.Timestamp,
+            Priority = originalMessage.Priority,
+            ReplyToId = originalMessage.ReplyToId,
+            RequiresAcknowledgment = originalMessage.RequiresAcknowledgment,
+            ExpiresIn = originalMessage.ExpiresIn,
+            Tags = originalMessage.Tags,
+            Metadata = new Dictionary<string, object>(originalMessage.Metadata)
+            {
+                ["GroupName"] = groupName,
+                ["IsGroupMessage"] = true,
+                ["OriginalReceiver"] = originalMessage.Receiver
+            }
+        };
+    }
+
     private async Task SendErrorMessageAsync(string recipientId, string error, IMessageTransport transport)
     {
         var errorMessage = new Message
@@ -418,10 +463,18 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
             Content = error,
             Sender = "System",
             Receiver = recipientId,
-            Type = MessageType.Error
+            Type = MessageType.Error,
+            Timestamp = DateTime.UtcNow
         };
 
-        await transport.SendMessageAsync(errorMessage, recipientId);
+        try
+        {
+            await transport.SendMessageAsync(errorMessage, recipientId);
+        }
+        catch (Exception ex)
+        {
+            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to send error message: {ex.Message}", ex));
+        }
     }
 
     private async Task SendAcknowledgmentAsync(Message originalMessage, bool success, IMessageTransport transport)
@@ -432,10 +485,76 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
             Sender = "System",
             Receiver = originalMessage.Sender,
             Type = MessageType.Acknowledgment,
-            ReplyToId = originalMessage.Id
+            ReplyToId = originalMessage.Id,
+            Timestamp = DateTime.UtcNow
         };
 
-        await transport.SendMessageAsync(ackMessage, originalMessage.Sender);
+        try
+        {
+            await transport.SendMessageAsync(ackMessage, originalMessage.Sender);
+        }
+        catch (Exception ex)
+        {
+            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to send acknowledgment: {ex.Message}", ex));
+        }
+    }
+
+    private void UpdateClientHeartbeat(string clientId)
+    {
+        _clientHeartbeats[clientId] = DateTime.UtcNow;
+    }
+
+    private void CleanupStaleClients(object? state)
+    {
+        try
+        {
+            var staleThreshold = DateTime.UtcNow.AddMinutes(-5);
+            var staleClients = _clientHeartbeats
+                .Where(kvp => kvp.Value < staleThreshold)
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            foreach (var clientId in staleClients)
+            {
+                RemoveClientFromBroker(clientId);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Cleanup error: {ex.Message}", ex));
+        }
+    }
+
+    private void RemoveClientFromBroker(string clientId)
+    {
+        lock (_lockObject)
+        {
+            if (_clients.TryRemove(clientId, out var client))
+            {
+                _clientToTransport.TryRemove(clientId, out _);
+                _clientHeartbeats.TryRemove(clientId, out _);
+
+                // Remove from all groups
+                if (_clientGroups.TryGetValue(clientId, out var groups))
+                {
+                    foreach (var groupName in groups.ToList())
+                    {
+                        if (_groups.TryGetValue(groupName, out var groupMembers))
+                        {
+                            groupMembers.Remove(clientId);
+                            if (groupMembers.Count == 0)
+                            {
+                                _groups.TryRemove(groupName, out _);
+                            }
+                        }
+                    }
+                    _clientGroups.TryRemove(clientId, out _);
+                }
+
+                client.IsOnline = false;
+                ClientDisconnected?.Invoke(this, new ClientDiscoveryEventArgs(client, false));
+            }
+        }
     }
     #endregion
 
@@ -445,6 +564,7 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
         if (!_disposed)
         {
             _disposed = true;
+            _heartbeatTimer?.Dispose();
 
             // Unregister all transports
             foreach (var transport in _transports.Values.ToList())
@@ -457,11 +577,11 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager
             _groups.Clear();
             _clientGroups.Clear();
             _clientToTransport.Clear();
+            _clientHeartbeats.Clear();
         }
     }
     #endregion
 }
-
 /// <summary>
 /// Factory for creating and configuring message brokers
 /// </summary>

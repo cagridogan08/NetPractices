@@ -6,64 +6,35 @@ using Messaging.ModelLibrary.Rtp;
 
 namespace Messaging.ModelLibrary.RTP;
 
-public class RtpClient : IMessageClient
+public class RtpClient : MessageClientBase
 {
     #region Fields
-
     private UdpClient? _udpClient;
     private IPEndPoint? _remoteEndPoint;
     private Task? _receiveTask;
     private CancellationTokenSource? _cancellationTokenSource;
     private ushort _sequenceNumber;
     private uint _ssrc;
-    private bool _isDisposed;
-
-    #endregion
-
-    #region Events
-
-    public event EventHandler<MessageEventArgs>? MessageReceived;
-    public event EventHandler<ConnectionEventArgs>? Connected;
-    public event EventHandler<ConnectionEventArgs>? Disconnected;
-    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
-
     #endregion
 
     #region Properties
-
-    public bool IsConnected { get; private set; }
-    public ConnectionInfo? ConnectionInfo { get; private set; }
-    public TransportType TransportType => TransportType.Rtp;
-
+    public override bool IsConnected => _udpClient != null && _remoteEndPoint is not null;
+    public override ConnectionInfo? ConnectionInfo { get; protected set; }
+    public override TransportType TransportType => TransportType.Rtp;
     #endregion
 
-    #region Methods
-
-    /// <summary>
-    /// Establishes a connection to an RTP server using the provided configuration settings.
-    /// 
-    /// Configuration dictionary keys:
-    /// - "ServerAddress" (string, required): The RTP server IP address or hostname
-    /// - "ServerPort" (int, required): The RTP server port number
-    /// - "LocalPort" (int, optional): Local port to bind to. Defaults to 0 (any available port)
-    /// - "ClientName" (string, optional): The identifier used for this client. Defaults to the current user's name.
-    /// - "ReceiveTimeout" (int, optional): UDP receive timeout in milliseconds. Defaults to 5000.
-    /// - "SendTimeout" (int, optional): UDP send timeout in milliseconds. Defaults to 5000.
-    /// </summary>
-    /// <param name="configuration">Dictionary containing RTP connection configuration.</param>
-    /// <returns>True if the connection was successful; otherwise, false.</returns>
-
-    public async Task<bool> ConnectAsync(Dictionary<string, object> configuration)
+    public override async Task<bool> ConnectAsync(Dictionary<string, object> configuration)
     {
         try
         {
             await DisconnectAsync();
+
             var serverAddress = configuration.GetValueOrDefault("ServerAddress") as string;
             var serverPort = configuration.GetValueOrDefault("ServerPort") as int?;
 
             if (string.IsNullOrEmpty(serverAddress) || !serverPort.HasValue)
             {
-                ErrorOccurred?.Invoke(this, new ErrorEventArgs("ServerAddress and ServerPort are required for RTP connection"));
+                OnErrorOccurred(new ErrorEventArgs("ServerAddress and ServerPort are required for RTP connection"));
                 return false;
             }
 
@@ -85,99 +56,51 @@ public class RtpClient : IMessageClient
             _udpClient.Client.SendTimeout = sendTimeout;
 
             _ssrc = (uint)Random.Shared.Next();
-
             _sequenceNumber = 0;
-
             _cancellationTokenSource = new();
 
             ConnectionInfo = new ConnectionInfo
             {
-                Id = _ssrc.ToString(),
+                Id = clientName,
                 Name = clientName,
                 Address = $"{serverAddress}:{serverPort}",
+                ConnectedAt = DateTime.UtcNow,
+                IsActive = true,
                 Properties = new Dictionary<string, object>
                 {
                     ["SSRC"] = _ssrc,
                     ["LocalPort"] = ((IPEndPoint)_udpClient.Client.LocalEndPoint!).Port
                 }
             };
-            var handshakeMessage = new Message
+
+            // Send registration message
+            var registrationMessage = new Message
             {
-                Content = "RTP_CONNECT",
+                Content = "CLIENT_REGISTER",
                 Sender = clientName,
-                Type = MessageType.Handshake
+                Receiver = "System",
+                Type = MessageType.System
             };
-            IsConnected = true;
-            var success = await SendMessageAsync(handshakeMessage);
+
+            var success = await SendMessageAsync(registrationMessage);
             if (!success)
             {
                 await DisconnectAsync();
                 return false;
             }
+
             _receiveTask = Task.Run(ReceiveMessagesAsync, _cancellationTokenSource.Token);
-            IsConnected = true;
-            Connected?.Invoke(this, new ConnectionEventArgs(ConnectionInfo));
+            OnConnected(new ConnectionEventArgs(ConnectionInfo));
             return true;
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"RTP connection failed: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"RTP connection failed: {ex.Message}", ex));
             return false;
         }
     }
 
-    private async Task ReceiveMessagesAsync()
-    {
-        try
-        {
-            while (_cancellationTokenSource is { Token.IsCancellationRequested: false }
-                   && !_isDisposed
-                   && _udpClient is not null)
-            {
-                try
-                {
-                    var result = await _udpClient.ReceiveAsync();
-                    if (_cancellationTokenSource?.Token.IsCancellationRequested == true || _isDisposed)
-                    {
-                        break;
-                    }
-
-                    try
-                    {
-                        var rtpPacket = RtpPacket.FromBytes(result.Buffer);
-                        var message = RtpMessageConverter.RtpPacketToMessage(rtpPacket);
-
-                        if (ConnectionInfo is null) continue;
-                        if (message.Type is MessageType.Handshake && message.Content.StartsWith("RTP_CONNECTED"))
-                        {
-                            continue;
-                        }
-                        MessageReceived?.Invoke(this, new MessageEventArgs(message, ConnectionInfo));
-                    }
-                    catch (Exception ex)
-                    {
-                        ErrorOccurred?.Invoke(this, new ErrorEventArgs($"RTP packet parse error: {ex.Message}", ex, ConnectionInfo));
-                    }
-                }
-                catch (SocketException ex) when (ex.SocketErrorCode == SocketError.TimedOut)
-                {
-                    // Timeout is expected, continue receiving
-                }
-                catch (ObjectDisposedException)
-                {
-                    // UDP client was disposed - expected during shutdown
-                    break;
-                }
-            }
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            throw;
-        }
-    }
-
-    public async Task DisconnectAsync()
+    public override async Task DisconnectAsync()
     {
         try
         {
@@ -185,17 +108,18 @@ public class RtpClient : IMessageClient
             {
                 var disconnectMessage = new Message()
                 {
-                    Content = "RTP_DISCONNECT",
+                    Content = "CLIENT_UNREGISTER",
                     Sender = ConnectionInfo.Name,
-                    Type = MessageType.Handshake
+                    Receiver = "System",
+                    Type = MessageType.System
                 };
                 try
                 {
                     await SendMessageAsync(disconnectMessage);
                 }
-                catch (Exception)
+                catch
                 {
-                    /*Ignore*/
+                    /*ignored*/
                 }
             }
 
@@ -205,18 +129,16 @@ public class RtpClient : IMessageClient
             {
                 try
                 {
-                    if (Task.WhenAny(_receiveTask, Task.Delay(TimeSpan.FromSeconds(3))) == _receiveTask)
-                    {
+                    if (await Task.WhenAny(_receiveTask, Task.Delay(TimeSpan.FromSeconds(3))) == _receiveTask)
                         await _receiveTask;
-                    }
                 }
-                catch (Exception)
+                catch
                 {
-                    /*Ignore*/
+                    /*ignored*/
                 }
-
                 _receiveTask = null;
             }
+
             _udpClient?.Close();
             _udpClient?.Dispose();
             _udpClient = null;
@@ -224,7 +146,7 @@ public class RtpClient : IMessageClient
 
             if (ConnectionInfo != null)
             {
-                Disconnected?.Invoke(this, new ConnectionEventArgs(ConnectionInfo));
+                OnDisconnected(new ConnectionEventArgs(ConnectionInfo));
                 ConnectionInfo = null;
             }
             _cancellationTokenSource?.Dispose();
@@ -232,15 +154,20 @@ public class RtpClient : IMessageClient
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"RTP disconnection error: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"RTP disconnection error: {ex.Message}", ex));
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message)
+    public override async Task<bool> SendMessageAsync(Message message)
     {
-        if (!IsConnected || _udpClient is null || _remoteEndPoint is null || _isDisposed) return false;
+        if (!IsConnected || _udpClient is null || _remoteEndPoint is null || _disposed)
+            return false;
+
         try
         {
+            if (string.IsNullOrEmpty(message.Sender))
+                message.Sender = ConnectionInfo?.Name ?? "Unknown";
+
             _sequenceNumber++;
             var rtpPacket = RtpMessageConverter.MessageToRtpPacket(message, _sequenceNumber, _ssrc);
             var data = rtpPacket.ToBytes();
@@ -249,26 +176,65 @@ public class RtpClient : IMessageClient
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"RTP send error: {ex.Message}", ex, ConnectionInfo));
+            OnErrorOccurred(new ErrorEventArgs($"RTP send error: {ex.Message}", ex, ConnectionInfo));
             return false;
         }
     }
-    public void Dispose()
+
+    private async Task ReceiveMessagesAsync()
     {
-        if (!_isDisposed)
+        try
         {
-            _isDisposed = true;
+            while (_cancellationTokenSource is { Token.IsCancellationRequested: false }
+                   && !_disposed
+                   && _udpClient is not null)
+            {
+                try
+                {
+                    var result = await _udpClient.ReceiveAsync();
+                    if (_cancellationTokenSource?.Token.IsCancellationRequested == true || _disposed)
+                        break;
+
+                    try
+                    {
+                        var rtpPacket = RtpPacket.FromBytes(result.Buffer);
+                        var message = RtpMessageConverter.RtpPacketToMessage(rtpPacket);
+
+                        if (ConnectionInfo is null) continue;
+                        if (message.Type is MessageType.Handshake && message.Content.StartsWith("RTP_CONNECTED"))
+                            continue;
+
+                        OnMessageReceived(new MessageEventArgs(message, ConnectionInfo));
+                    }
+                    catch (Exception ex)
+                    {
+                        OnErrorOccurred(new ErrorEventArgs($"RTP packet parse error: {ex.Message}", ex, ConnectionInfo));
+                    }
+                }
+                catch (SocketException ex) when (ex.SocketErrorCode == SocketError.TimedOut) { }
+                catch (ObjectDisposedException) { break; }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed && _cancellationTokenSource?.Token.IsCancellationRequested != true)
+                OnErrorOccurred(new ErrorEventArgs($"RTP receive error: {ex.Message}", ex, ConnectionInfo));
+        }
+    }
+
+    public override void Dispose()
+    {
+        if (!_disposed)
+        {
+            base.Dispose();
             try
             {
                 DisconnectAsync().Wait(3000);
             }
-            catch (Exception)
+            catch
             {
-                /*Ignore*/
+                /*ignored*/
             }
         }
     }
-
-    #endregion
-
 }

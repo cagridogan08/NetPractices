@@ -6,54 +6,26 @@ using Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.ModelLibrary.Udp;
 
-public class UdpTransport : IMessageTransport
+public class UdpTransport : MessageTransportBase
 {
     #region Fields
 
-    private readonly ConcurrentDictionary<string, UdpClientInfo> _connections = new();
     private UdpClient? _udpServer;
     private CancellationTokenSource? _cancellationTokenSource;
     private Task? _serverTask;
-    private bool _disposed;
     private IPEndPoint? _localEndPoint;
-
-    #endregion
-
-    #region Events
-
-    public event EventHandler<MessageEventArgs>? MessageReceived;
-    public event EventHandler<ConnectionEventArgs>? ClientConnected;
-    public event EventHandler<ConnectionEventArgs>? ClientDisconnected;
-    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
+    private readonly ConcurrentDictionary<string, IPEndPoint> _clientEndPoints = new();
 
     #endregion
 
     #region Properties
 
-    public bool IsRunning { get; private set; }
-    public TransportType TransportType => TransportType.Udp;
-    public IReadOnlyList<ConnectionInfo> Connections => _connections.Values.Select(c => c.ConnectionInfo).ToList();
-
+    public new event EventHandler<ConnectionEventArgs>? ClientDisconnected;
+    public override bool IsRunning { get; protected set; }
+    public override TransportType TransportType => TransportType.Udp;
     #endregion
 
-    #region Methods
-
-
-    /// <summary>
-    /// Starts a UDP server using the specified configuration settings.
-    /// If an existing server is running, it is stopped before starting a new one.
-    /// 
-    /// Optional configuration dictionary keys:
-    /// - "Host" (string, optional): The IP address or hostname to bind to. 
-    ///   Defaults to "localhost" (binds to IPAddress.Any).
-    /// - "Port" (int, optional): The port number to bind the UDP server to. Defaults to 8080.
-    /// 
-    /// Initializes a UdpClient bound to the given endpoint and starts listening for incoming datagrams asynchronously.
-    /// Raises the ErrorOccurred event if the server fails to start.
-    /// </summary>
-    /// <param name="configuration">Optional dictionary containing UDP server configuration settings.</param>
-    /// <returns>True if the server started successfully; otherwise, false.</returns>
-    public async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
+    public override async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
     {
         try
         {
@@ -74,12 +46,12 @@ public class UdpTransport : IMessageTransport
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to start UDP server: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to start UDP server: {ex.Message}", ex));
             return false;
         }
     }
 
-    public async Task StopAsync()
+    public override async Task StopAsync()
     {
         try
         {
@@ -90,14 +62,9 @@ public class UdpTransport : IMessageTransport
                 try
                 {
                     if (await Task.WhenAny(_serverTask, Task.Delay(3000)) == _serverTask)
-                    {
                         await _serverTask;
-                    }
                 }
-                catch (Exception)
-                {
-                    // Ignore server task exceptions during shutdown
-                }
+                catch {/*ignored*/  }
                 _serverTask = null;
             }
 
@@ -105,10 +72,7 @@ public class UdpTransport : IMessageTransport
             {
                 _udpServer?.Close();
             }
-            catch (Exception)
-            {
-                // Ignore close errors
-            }
+            catch {/*ignored*/ }
 
             _udpServer?.Dispose();
             _udpServer = null;
@@ -120,50 +84,56 @@ public class UdpTransport : IMessageTransport
             }
 
             _connections.Clear();
+            _clientEndPoints.Clear();
             IsRunning = false;
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Error stopping server: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Error stopping server: {ex.Message}", ex));
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
+    public override async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
     {
         try
         {
             if (string.IsNullOrEmpty(connectionId))
-            {
                 return await BroadcastMessageAsync(message);
-            }
 
-            if (_connections.TryGetValue(connectionId, out var clientInfo))
+            if (_clientEndPoints.TryGetValue(connectionId, out var endPoint))
             {
-                return await SendToEndPointAsync(message, clientInfo.EndPoint);
+                return await SendToEndPointAsync(message, endPoint);
             }
 
             return false;
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to send message: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to send message: {ex.Message}", ex));
             return false;
         }
     }
 
-    public async Task<bool> BroadcastMessageAsync(Message message)
+    public override async Task<bool> BroadcastMessageAsync(Message message)
     {
         try
         {
-            var tasks = _connections.Values.Select(clientInfo => SendToEndPointAsync(message, clientInfo.EndPoint));
+            var tasks = _clientEndPoints.Values.Select(endPoint => SendToEndPointAsync(message, endPoint));
             var results = await Task.WhenAll(tasks);
             return results.Any(r => r);
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to broadcast message: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to broadcast message: {ex.Message}", ex));
             return false;
         }
+    }
+
+    protected override string GetClientAddress(object transportSpecificData)
+    {
+        return transportSpecificData is IPEndPoint endPoint
+            ? endPoint.ToString()
+            : "Unknown";
     }
 
     private async Task<bool> SendToEndPointAsync(Message message, IPEndPoint endPoint)
@@ -178,13 +148,9 @@ public class UdpTransport : IMessageTransport
             await _udpServer.SendAsync(data, data.Length, endPoint);
             return true;
         }
-        catch (ObjectDisposedException)
-        {
-            return false;
-        }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Send to endpoint error: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Send to endpoint error: {ex.Message}", ex));
             return false;
         }
     }
@@ -204,130 +170,54 @@ public class UdpTransport : IMessageTransport
                     {
                         var message = JsonSerializer.Deserialize<Message>(json);
                         var clientEndPoint = result.RemoteEndPoint;
-                        var clientKey = clientEndPoint.ToString();
+                        var clientKey = message?.Sender ?? clientEndPoint.ToString();
 
-                        // Handle connection/disconnection messages
-                        if (message?.Content == "CONNECT")
+                        if (message?.Type == MessageType.System)
                         {
-                            if (!_connections.TryGetValue(clientKey, out var connection))
+                            if (message.Content == "CLIENT_REGISTER")
                             {
-                                var connectionInfo = new ConnectionInfo
-                                {
-                                    Id = Guid.NewGuid().ToString(),
-                                    Name = message.Sender,
-                                    Address = clientEndPoint.ToString()
-                                };
-
-                                var clientInfo = new UdpClientInfo(connectionInfo, clientEndPoint)
-                                {
-                                    LastSeen = DateTime.Now
-                                };
-
-                                _connections.TryAdd(clientKey, clientInfo);
-                                ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
+                                _clientEndPoints[clientKey] = clientEndPoint;
+                                RegisterClient(clientKey, message.Sender, clientEndPoint);
+                            }
+                            else if (message.Content == "CLIENT_UNREGISTER")
+                            {
+                                _clientEndPoints.TryRemove(clientKey, out _);
+                                UnregisterClient(clientKey);
                             }
                             else
                             {
-                                // Update last seen time
-                                connection.LastSeen = DateTime.Now;
+                                HandleReceivedMessage(message, clientKey);
                             }
                         }
-                        else if (message?.Content == "DISCONNECT")
+                        else if (message != null)
                         {
-                            if (_connections.TryRemove(clientKey, out var clientInfo))
-                            {
-                                ClientDisconnected?.Invoke(this, new ConnectionEventArgs(clientInfo.ConnectionInfo));
-                            }
-                        }
-                        else
-                        {
-                            // Regular message
-                            if (_connections.TryGetValue(clientKey, out var clientInfo))
-                            {
-                                clientInfo.LastSeen = DateTime.Now;
-                                if (message != null)
-                                    MessageReceived?.Invoke(this,
-                                        new MessageEventArgs(message, clientInfo.ConnectionInfo));
-                            }
-                            else
-                            {
-                                message ??= new Message
-                                {
-                                    Id = Guid.NewGuid().ToString(),
-                                    Sender = "Unknown",
-                                    Content = "Unregistered client message"
-                                };
-                                // Message from unknown client - auto-register them
-                                var connectionInfo = new ConnectionInfo
-                                {
-                                    Id = Guid.NewGuid().ToString(),
-                                    Name = message.Sender,
-                                    Address = clientEndPoint.ToString()
-                                };
+                            // Update client endpoint if it changed
+                            _clientEndPoints.AddOrUpdate(clientKey, clientEndPoint, (_, _) => clientEndPoint);
 
-                                var newClientInfo = new UdpClientInfo(connectionInfo, clientEndPoint)
-                                {
-
-                                    LastSeen = DateTime.Now
-                                };
-
-                                _connections.TryAdd(clientKey, newClientInfo);
-                                ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
-                                MessageReceived?.Invoke(this, new MessageEventArgs(message, connectionInfo));
+                            // Auto-register if not already registered
+                            if (!_connections.ContainsKey(clientKey))
+                            {
+                                RegisterClient(clientKey, message.Sender, clientEndPoint);
                             }
+                            HandleReceivedMessage(message, clientKey);
                         }
                     }
                 }
             }
             catch (JsonException ex)
             {
-                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex));
+                OnErrorOccurred(new ErrorEventArgs($"Message parse error: {ex.Message}", ex));
             }
-            catch (SocketException)
-            {
-                // Socket was closed - this is expected during shutdown
-                break;
-            }
-            catch (ObjectDisposedException)
-            {
-                // UDP client was disposed - this is expected during shutdown
-                break;
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            catch (SocketException) { break; }
+            catch (ObjectDisposedException) { break; }
+            catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
                 if (!_cancellationTokenSource.Token.IsCancellationRequested)
                 {
-                    ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Server error: {ex.Message}", ex));
+                    OnErrorOccurred(new ErrorEventArgs($"Server error: {ex.Message}", ex));
                 }
             }
         }
-    }
-
-    public void Dispose()
-    {
-        if (!_disposed)
-        {
-            _disposed = true;
-
-            try
-            {
-                StopAsync().Wait(3000); // Wait up to 3 seconds
-            }
-            catch (Exception)
-            {
-                // Ignore disposal errors
-            }
-        }
-    }
-
-    #endregion
-
-    private record UdpClientInfo(ConnectionInfo ConnectionInfo, IPEndPoint EndPoint)
-    {
-        public DateTime LastSeen { get; set; }
     }
 }

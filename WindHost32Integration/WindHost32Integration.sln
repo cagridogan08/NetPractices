@@ -35,6 +35,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestApi2", "TestApi2\TestAp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Messaging.ModelLibraryTests", "Messaging.ModelLibraryTests\Messaging.ModelLibraryTests.csproj", "{D05609FF-A58C-4893-B8BB-E6153ADEADE0}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "AvalondockTests", "AvalondockTests", "{AF81AB62-2479-408A-BEB4-EDBAB2D99889}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DockingManagerTestApplication", "DockingManagerTestApplication\DockingManagerTestApplication.csproj", "{BEC9BF1C-6FB9-4B15-84E8-613E870EF476}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -85,6 +89,10 @@ Global
 		{D05609FF-A58C-4893-B8BB-E6153ADEADE0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D05609FF-A58C-4893-B8BB-E6153ADEADE0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D05609FF-A58C-4893-B8BB-E6153ADEADE0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BEC9BF1C-6FB9-4B15-84E8-613E870EF476}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BEC9BF1C-6FB9-4B15-84E8-613E870EF476}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BEC9BF1C-6FB9-4B15-84E8-613E870EF476}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BEC9BF1C-6FB9-4B15-84E8-613E870EF476}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -101,6 +109,7 @@ Global
 		{9C2657C5-22A5-4F48-8797-F80976B843FF} = {19DB83E8-61DE-4C65-84F5-B32160110684}
 		{555A3C6E-9C7E-414D-B3CF-677EA887EF2E} = {19DB83E8-61DE-4C65-84F5-B32160110684}
 		{D05609FF-A58C-4893-B8BB-E6153ADEADE0} = {2C979246-C0ED-4CBC-9C6B-3E0848F2DC6A}
+		{BEC9BF1C-6FB9-4B15-84E8-613E870EF476} = {AF81AB62-2479-408A-BEB4-EDBAB2D99889}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {E836413E-34E3-4BB4-8E91-25ED46A4F8A3}

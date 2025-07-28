@@ -1,7 +1,6 @@
 ﻿syntax = "proto3";
 
 option csharp_namespace = "Messaging.ModelLibrary.Grpc";
-
 package messaging;
 
 // The messaging service definition
@@ -12,11 +11,24 @@ service MessagingService {
   // Simple request-response for sending single messages
   rpc SendMessage(GrpcMessage) returns (MessageResponse);
   
-  // Get connection info
-  rpc GetConnectionInfo(Empty) returns (GrpcConnectionInfo);
+  // Client registration and discovery
+  rpc RegisterClient(ClientRegistration) returns (RegistrationResponse);
+  rpc UnregisterClient(ClientInfo) returns (UnregistrationResponse);
+  rpc GetOnlineClients(Empty) returns (ClientList);
+  
+  // Group management
+  rpc CreateGroup(GroupRequest) returns (GroupResponse);
+  rpc JoinGroup(GroupRequest) returns (GroupResponse);
+  rpc LeaveGroup(GroupRequest) returns (GroupResponse);
+  rpc SendGroupMessage(GroupMessage) returns (MessageResponse);
+
+  rpc GetConnectionInfo(Empty) returns (ClientInfo);
+  
+  // Health check
+  rpc HealthCheck(Empty) returns (HealthResponse);
 }
 
-// Message structure
+// Enhanced message structure
 message GrpcMessage {
   string id = 1;
   string content = 2;
@@ -24,7 +36,11 @@ message GrpcMessage {
   string receiver = 4;
   int64 timestamp = 5;
   GrpcMessageType type = 6;
-  map<string, string> metadata = 7;
+  GrpcMessagePriority priority = 7;
+  map<string, string> metadata = 8;
+  string reply_to_id = 9;
+  bool requires_acknowledgment = 10;
+  repeated string tags = 11;
 }
 
 // Message types
@@ -32,22 +48,86 @@ enum GrpcMessageType {
   TEXT = 0;
   ERROR = 1;
   HANDSHAKE = 2;
+  SYSTEM = 3;
+  BROADCAST = 4;
+  DIRECT = 5;
+  ACKNOWLEDGMENT = 6;
 }
 
-// Connection information
-message GrpcConnectionInfo {
+// Message priority
+enum GrpcMessagePriority {
+  LOW = 0;
+  NORMAL = 1;
+  HIGH = 2;
+  CRITICAL = 3;
+}
+
+// Client registration
+message ClientRegistration {
+  string client_name = 1;
+  string client_id = 2;
+  map<string, string> properties = 3;
+}
+
+message RegistrationResponse {
+  bool success = 1;
+  string message = 2;
+  string assigned_id = 3;
+}
+
+// Client information
+message ClientInfo {
   string id = 1;
   string name = 2;
-  string address = 3;
-  int64 connected_at = 4;
-  bool is_active = 5;
-  map<string, string> properties = 6;
+  string display_name = 3;
+  string address = 4;
+  int64 connected_at = 5;
+  bool is_online = 6;
+  map<string, string> properties = 7;
+  repeated string groups = 8;
+  int64 transportType= 9;
+
 }
 
-// Response for message sending
+message ClientList {
+  repeated ClientInfo clients = 1;
+}
+
+message UnregistrationResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Group management
+message GroupRequest {
+  string group_name = 1;
+  string client_id = 2;
+  string client_name = 3;
+}
+
+message GroupResponse {
+  bool success = 1;
+  string message = 2;
+  repeated string members = 3;
+}
+
+message GroupMessage {
+  string group_name = 1;
+  GrpcMessage message = 2;
+}
+
+// Response messages
 message MessageResponse {
   bool success = 1;
   string error_message = 2;
+  string message_id = 3;
+}
+
+message HealthResponse {
+  bool healthy = 1;
+  string version = 2;
+  int32 active_connections = 3;
+  int64 uptime_seconds = 4;
 }
 
 // Empty message for requests that don't need parameters

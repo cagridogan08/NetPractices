@@ -7,31 +7,21 @@ using Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.ModelLibrary.WebSocket;
 
-public class WebSocketMessageClient : IMessageClient
+public class WebSocketMessageClient : MessageClientBase
 {
     #region Fields
 
     private ClientWebSocket? _webSocket;
     private Task? _readTask;
     private CancellationTokenSource? _cancellationTokenSource;
-    private bool _disposed;
-
-    #endregion
-
-    #region Events
-
-    public event EventHandler<MessageEventArgs>? MessageReceived;
-    public event EventHandler<ConnectionEventArgs>? Connected;
-    public event EventHandler<ConnectionEventArgs>? Disconnected;
-    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
     #endregion
 
     #region Properties
 
-    public bool IsConnected => _webSocket?.State == WebSocketState.Open;
-    public ConnectionInfo? ConnectionInfo { get; private set; }
-    public TransportType TransportType => TransportType.WebSocket;
+    public override bool IsConnected => _webSocket?.State == WebSocketState.Open;
+    public override ConnectionInfo? ConnectionInfo { get; protected set; }
+    public override TransportType TransportType => TransportType.WebSocket;
 
     #endregion
 
@@ -55,7 +45,7 @@ public class WebSocketMessageClient : IMessageClient
     /// <param name="configuration">Dictionary containing WebSocket connection configuration options.</param>
     /// <returns>True if the connection is successfully established; otherwise, false.</returns>
 
-    public async Task<bool> ConnectAsync(Dictionary<string, object>? configuration)
+    public override async Task<bool> ConnectAsync(Dictionary<string, object>? configuration)
     {
         try
         {
@@ -64,17 +54,16 @@ public class WebSocketMessageClient : IMessageClient
             var host = configuration?.GetValueOrDefault("Host", "localhost") as string ?? "localhost";
             var port = configuration?.GetValueOrDefault("Port", 8080) as int? ?? 8080;
             var path = configuration?.GetValueOrDefault("Path", "/") as string ?? "/";
-            var useSSL = configuration?.GetValueOrDefault("UseSSL", false) as bool? ?? false;
+            var useSsl = configuration?.GetValueOrDefault("UseSSL", false) as bool? ?? false;
             var timeout = configuration?.GetValueOrDefault("Timeout", 5000) as int? ?? 5000;
             var clientName = configuration?.GetValueOrDefault("ClientName", Environment.UserName) as string ?? Environment.UserName;
 
-            var protocol = useSSL ? "wss" : "ws";
+            var protocol = useSsl ? "wss" : "ws";
             var uri = new Uri($"{protocol}://{host}:{port}{path}");
 
             _webSocket = new ClientWebSocket();
             _cancellationTokenSource = new CancellationTokenSource();
 
-            // Set timeout for connection
             using var timeoutCts = new CancellationTokenSource(timeout);
             using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(
                 _cancellationTokenSource.Token, timeoutCts.Token);
@@ -83,38 +72,63 @@ public class WebSocketMessageClient : IMessageClient
 
             ConnectionInfo = new ConnectionInfo
             {
-                Id = Guid.NewGuid().ToString(),
+                Id = clientName,
                 Name = clientName,
-                Address = uri.ToString()
+                Address = uri.ToString(),
+                ConnectedAt = DateTime.UtcNow,
+                IsActive = true
             };
 
             _readTask = Task.Run(ReadMessagesAsync, _cancellationTokenSource.Token);
 
-            Connected?.Invoke(this, new ConnectionEventArgs(ConnectionInfo));
+            // Send registration message
+            var registrationMessage = new Message
+            {
+                Content = "CLIENT_REGISTER",
+                Sender = clientName,
+                Receiver = "System",
+                Type = MessageType.System
+            };
+            await SendMessageAsync(registrationMessage);
+
+            OnConnected(new ConnectionEventArgs(ConnectionInfo));
             return true;
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Connection failed: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Connection failed: {ex.Message}", ex));
             return false;
         }
     }
 
-    public async Task DisconnectAsync()
+    public override async Task DisconnectAsync()
     {
         try
         {
+            if (IsConnected && ConnectionInfo != null)
+            {
+                var unregisterMessage = new Message
+                {
+                    Content = "CLIENT_UNREGISTER",
+                    Sender = ConnectionInfo.Name,
+                    Receiver = "System",
+                    Type = MessageType.System
+                };
+                await SendMessageAsync(unregisterMessage);
+            }
+
             _cancellationTokenSource?.Cancel();
 
             if (_webSocket?.State == WebSocketState.Open)
             {
                 try
                 {
-                    await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnecting", CancellationToken.None);
+                    await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnecting",
+                        CancellationToken.None);
                 }
-                catch (Exception)
+                catch
                 {
-                    // Ignore close errors
+                    /*ignored*/
                 }
             }
 
@@ -123,13 +137,11 @@ public class WebSocketMessageClient : IMessageClient
                 try
                 {
                     if (await Task.WhenAny(_readTask, Task.Delay(2000)) == _readTask)
-                    {
                         await _readTask;
-                    }
                 }
-                catch (Exception)
+                catch
                 {
-                    // Ignore exceptions during task wait
+                    /*ignored*/
                 }
                 _readTask = null;
             }
@@ -139,21 +151,24 @@ public class WebSocketMessageClient : IMessageClient
 
             if (ConnectionInfo != null)
             {
-                Disconnected?.Invoke(this, new ConnectionEventArgs(ConnectionInfo));
+                OnDisconnected(new ConnectionEventArgs(ConnectionInfo));
                 ConnectionInfo = null;
             }
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Disconnection error: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Disconnection error: {ex.Message}", ex));
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message)
+    public override async Task<bool> SendMessageAsync(Message message)
     {
         try
         {
             if (!IsConnected || _disposed) return false;
+
+            if (string.IsNullOrEmpty(message.Sender))
+                message.Sender = ConnectionInfo?.Name ?? "Unknown";
 
             var json = JsonSerializer.Serialize(message);
             var buffer = Encoding.UTF8.GetBytes(json);
@@ -163,21 +178,9 @@ public class WebSocketMessageClient : IMessageClient
                 await _webSocket.SendAsync(segment, WebSocketMessageType.Text, true, _cancellationTokenSource.Token);
             return true;
         }
-        catch (ObjectDisposedException)
-        {
-            return false;
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
-        }
-        catch (WebSocketException)
-        {
-            return false;
-        }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Send error: {ex.Message}", ex, ConnectionInfo));
+            OnErrorOccurred(new ErrorEventArgs($"Send error: {ex.Message}", ex, ConnectionInfo));
             return false;
         }
     }
@@ -206,12 +209,12 @@ public class WebSocketMessageClient : IMessageClient
                             {
                                 var message = JsonSerializer.Deserialize<Message>(json);
                                 if (message != null && ConnectionInfo is not null)
-                                    MessageReceived?.Invoke(this, new MessageEventArgs(message, ConnectionInfo));
+                                    OnMessageReceived(new MessageEventArgs(message, ConnectionInfo));
                             }
                         }
                         catch (JsonException ex)
                         {
-                            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex, ConnectionInfo));
+                            OnErrorOccurred(new ErrorEventArgs($"Message parse error: {ex.Message}", ex, ConnectionInfo));
                         }
                     }
                     else if (result.MessageType == WebSocketMessageType.Close)
@@ -221,28 +224,19 @@ public class WebSocketMessageClient : IMessageClient
                 }
             }
         }
-        catch (ObjectDisposedException)
-        {
-            // WebSocket was disposed - this is expected during shutdown
-        }
-        catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
-        {
-            // Connection was closed - this is expected during disconnect
-        }
-        catch (OperationCanceledException)
-        {
-            // Cancellation requested - this is expected during shutdown
-        }
+        catch (ObjectDisposedException) { }
+        catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely) { }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             if (_cancellationTokenSource is { Token.IsCancellationRequested: false } && !_disposed)
             {
-                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex, ConnectionInfo));
+                OnErrorOccurred(new ErrorEventArgs($"Read error: {ex.Message}", ex, ConnectionInfo));
             }
         }
     }
 
-    public void Dispose()
+    public override void Dispose()
     {
         if (!_disposed)
         {

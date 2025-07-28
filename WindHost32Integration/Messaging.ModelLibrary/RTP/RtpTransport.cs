@@ -1,8 +1,9 @@
-﻿using Messaging.ModelLibrary.Rtp;
+﻿using Messaging.ModelLibrary.Abstract;
+using Messaging.ModelLibrary.Rtp;
+using Microsoft.AspNetCore.Http;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
-using Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.ModelLibrary.RTP
 {
@@ -375,9 +376,41 @@ namespace Messaging.ModelLibrary.RTP
             }
         }
 
-        public Task<bool> BroadcastMessageAsync(Message message)
+        public async Task<bool> BroadcastMessageAsync(Message message)
         {
-            throw new NotImplementedException();
+            try
+            {
+                var tasks = _clients.Values.Select(session => SendMessageToSession(session, message));
+                var results = await Task.WhenAll(tasks);
+                return results.Any(r => r);
+            }
+            catch (Exception ex)
+            {
+                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to broadcast RTP message: {ex.Message}", ex));
+                return false;
+            }
+        }
+        private async Task<bool> SendMessageToSession(RtpClientSession session, Message message)
+        {
+            try
+            {
+                if (_udpServer == null || _isDisposed)
+                    return false;
+
+                _sequenceNumber++;
+
+                var rtpPacket = RtpMessageConverter.MessageToRtpPacket(message, _sequenceNumber, _serverSsrc);
+                var packetData = rtpPacket.ToBytes();
+
+                await _udpServer.SendAsync(packetData, session.EndPoint);
+                session.UpdateLastActivity();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"RTP send error to {session.EndPoint}: {ex.Message}", ex, session.ConnectionInfo));
+                return false;
+            }
         }
         public void Dispose()
         {

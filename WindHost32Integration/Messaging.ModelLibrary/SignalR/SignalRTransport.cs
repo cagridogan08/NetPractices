@@ -1,62 +1,45 @@
-﻿using Microsoft.AspNetCore.Builder;
+﻿using Messaging.ModelLibrary.Abstract;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
-using Messaging.ModelLibrary.Abstract;
+using System.Text.Json;
 
 namespace Messaging.ModelLibrary.SignalR;
 
+/// <summary>
+/// Enhanced SignalR transport with comprehensive client-to-client messaging support
+/// </summary>
 public class SignalRTransport(string address = "localhost", int port = 5003, string path = "/messagingHub")
-    : IMessageTransport
+    : MessageTransportBase
 {
     #region Fields
 
-    private readonly ConcurrentDictionary<string, SignalRClientInfo> _connections = new();
+    private readonly ConcurrentDictionary<string, EnhancedSignalRClientInfo> _clientConnections = new();
+    private readonly ConcurrentDictionary<string, HashSet<string>> _groups = new();
+    private readonly ConcurrentDictionary<string, HashSet<string>> _clientGroups = new();
     private IHost? _host;
     private CancellationTokenSource? _cancellationTokenSource;
-    private bool _disposed;
-
-    #endregion
-
-    #region Events
-
-    public event EventHandler<MessageEventArgs>? MessageReceived;
-    public event EventHandler<ConnectionEventArgs>? ClientConnected;
-    public event EventHandler<ConnectionEventArgs>? ClientDisconnected;
-    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
-
+    private DateTime _startTime;
     #endregion
 
     #region Properties
+    public override bool IsRunning { get; protected set; }
+    public override TransportType TransportType => TransportType.SignalR;
+    public override IReadOnlyList<ConnectionInfo> Connections =>
+        _clientConnections.Values.Select(c => c.ConnectionInfo).ToList();
 
-    public bool IsRunning { get; private set; }
-    public TransportType TransportType => TransportType.SignalR;
-    public IReadOnlyList<ConnectionInfo> Connections => _connections.Values.Select(c => c.ConnectionInfo).ToList();
-
+    // Additional properties for monitoring
+    public int ActiveGroups => _groups.Count;
+    public TimeSpan Uptime => IsRunning ? DateTime.UtcNow - _startTime : TimeSpan.Zero;
     #endregion
 
-    #region Methods
-
-    /// <summary>
-    /// Starts the SignalR server with the provided configuration.
-    /// 
-    /// Configuration dictionary keys:
-    /// - "Address" (string, optional): Server bind address. Defaults to constructor value.
-    /// - "Port" (int, optional): Server port. Defaults to constructor value.
-    /// - "HubPath" (string, optional): Hub endpoint path. Defaults to constructor value.
-    /// - "EnableHttps" (bool, optional): Whether to use HTTPS. Defaults to false.
-    /// - "CertificatePath" (string, optional): Path to SSL certificate for HTTPS.
-    /// - "CertificatePassword" (string, optional): Password for SSL certificate.
-    /// - "EnableCors" (bool, optional): Enable CORS for cross-origin requests. Defaults to true.
-    /// - "CorsOrigins" (string[], optional): Allowed CORS origins. Defaults to ["*"].
-    /// - "EnableDetailedErrors" (bool, optional): Enable detailed error messages. Defaults to false.
-    /// - "MaxBufferSize" (int, optional): Maximum message buffer size. Defaults to 32KB.
-    /// - "EnableMessagePack" (bool, optional): Enable MessagePack protocol. Defaults to false.
-    /// </summary>
-    public async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
+    #region Transport Implementation
+    public override async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
     {
         try
         {
@@ -72,60 +55,146 @@ public class SignalRTransport(string address = "localhost", int port = 5003, str
             var corsOrigins = configuration?.GetValueOrDefault("CorsOrigins", new[] { "*" }) as string[] ?? new[] { "*" };
             var enableDetailedErrors = configuration?.GetValueOrDefault("EnableDetailedErrors", false) as bool? ?? false;
             var maxBufferSize = configuration?.GetValueOrDefault("MaxBufferSize", 32 * 1024) as int? ?? 32 * 1024;
+            var keepAliveInterval = configuration?.GetValueOrDefault("KeepAliveInterval", 15) as int? ?? 15;
+            var clientTimeoutInterval = configuration?.GetValueOrDefault("ClientTimeoutInterval", 30) as int? ?? 30;
+
             _cancellationTokenSource = new CancellationTokenSource();
+            _startTime = DateTime.UtcNow;
 
             var builder = Host.CreateDefaultBuilder()
                 .ConfigureWebHostDefaults(webBuilder =>
                 {
                     webBuilder.ConfigureServices(services =>
                     {
-                        // Add SignalR services
-                        services.AddSignalR(options =>
+                        // Register the transport instance
+                        services.AddSingleton(this);
+
+                        // Add SignalR services with enhanced configuration
+                        var signalRBuilder = services.AddSignalR(options =>
                         {
                             options.EnableDetailedErrors = enableDetailedErrors;
                             options.MaximumReceiveMessageSize = maxBufferSize;
-                            options.StreamBufferCapacity = 10;
+                            options.StreamBufferCapacity = 20;
+                            options.KeepAliveInterval = TimeSpan.FromSeconds(keepAliveInterval);
+                            options.ClientTimeoutInterval = TimeSpan.FromSeconds(clientTimeoutInterval);
+                            options.HandshakeTimeout = TimeSpan.FromSeconds(15);
+                            options.MaximumParallelInvocationsPerClient = 10;
                         });
+
+
+                        // Add JSON protocol with custom options
+                        signalRBuilder.AddJsonProtocol(options =>
+                        {
+                            options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+                            options.PayloadSerializerOptions.WriteIndented = false;
+                        });
+
                         // Add CORS if enabled
                         if (enableCors)
                         {
                             services.AddCors(options =>
                             {
-                                options.AddPolicy("CorsPolicy", policy =>
+                                options.AddPolicy("SignalRCorsPolicy", policy =>
                                 {
-                                    policy.AllowAnyHeader().AllowAnyMethod().SetIsOriginAllowed(_ => true).AllowCredentials();
+                                    if (corsOrigins.Contains("*"))
+                                    {
+                                        policy.SetIsOriginAllowed(_ => true);
+                                    }
+                                    else
+                                    {
+                                        policy.WithOrigins(corsOrigins);
+                                    }
+
+                                    policy.AllowAnyHeader()
+                                          .AllowAnyMethod()
+                                          .AllowCredentials();
                                 });
                             });
                         }
 
-                        // Register the transport instance
-                        services.AddSingleton(this);
+                        // Add health checks
+                        services.AddHealthChecks();
+
+                        // Add logging
+                        services.AddLogging(builder =>
+                        {
+                            builder.AddConsole();
+                            builder.SetMinimumLevel(LogLevel.Information);
+                        });
                     });
 
                     webBuilder.Configure(app =>
                     {
                         if (enableCors)
                         {
-                            app.UseCors();
+                            app.UseCors("SignalRCorsPolicy");
                         }
 
                         app.UseRouting();
+
                         app.UseEndpoints(endpoints =>
                         {
-                            endpoints.MapHub<MessagingHub>(hubPath);
+                            // Map the enhanced SignalR hub
+                            endpoints.MapHub<EnhancedMessagingHub>(hubPath);
+
+                            // Health check endpoint
+                            endpoints.MapHealthChecks("/health");
+
+                            // Status endpoint for monitoring
+                            endpoints.MapGet("/status", async context =>
+                            {
+                                var status = new
+                                {
+                                    Status = "Healthy",
+                                    Transport = "SignalR",
+                                    HubPath = hubPath,
+                                    ActiveConnections = _clientConnections.Count,
+                                    ActiveGroups = _groups.Count,
+                                    Uptime = DateTime.UtcNow - _startTime,
+                                    Version = "1.0"
+                                };
+
+                                context.Response.ContentType = "application/json";
+                                await context.Response.WriteAsync(JsonSerializer.Serialize(status));
+                            });
+
+                            // Hub info endpoint
+                            endpoints.MapGet(hubPath + "/info", async context =>
+                            {
+                                var info = new
+                                {
+                                    HubName = "EnhancedMessagingHub",
+                                    MaxMessageSize = maxBufferSize,
+                                    KeepAliveInterval = keepAliveInterval,
+                                    ClientTimeout = clientTimeoutInterval
+                                };
+
+                                context.Response.ContentType = "application/json";
+                                await context.Response.WriteAsync(JsonSerializer.Serialize(info));
+                            });
                         });
                     });
 
-                    var url = enableHttps ? $"https://{address1}:{port1}" : $"http://{address1}:{port1}";
+                    // Configure server URLs
+                    var protocol = enableHttps ? "https" : "http";
+                    var url = $"{protocol}://{address1}:{port1}";
                     webBuilder.UseUrls(url);
 
+                    // Configure Kestrel for HTTPS if needed
                     if (enableHttps && !string.IsNullOrEmpty(certPath))
                     {
                         webBuilder.UseKestrel(options =>
                         {
                             options.ConfigureHttpsDefaults(httpsOptions =>
                             {
-                                httpsOptions.ServerCertificate = !string.IsNullOrEmpty(certPassword) ? new System.Security.Cryptography.X509Certificates.X509Certificate2(certPath, certPassword) : new System.Security.Cryptography.X509Certificates.X509Certificate2(certPath);
+                                if (!string.IsNullOrEmpty(certPassword))
+                                {
+                                    httpsOptions.ServerCertificate = new System.Security.Cryptography.X509Certificates.X509Certificate2(certPath, certPassword);
+                                }
+                                else
+                                {
+                                    httpsOptions.ServerCertificate = new System.Security.Cryptography.X509Certificates.X509Certificate2(certPath);
+                                }
                             });
                         });
                     }
@@ -133,6 +202,7 @@ public class SignalRTransport(string address = "localhost", int port = 5003, str
                 .ConfigureLogging(logging =>
                 {
                     logging.SetMinimumLevel(LogLevel.Information);
+                    logging.AddConsole();
                 });
 
             _host = builder.Build();
@@ -143,27 +213,48 @@ public class SignalRTransport(string address = "localhost", int port = 5003, str
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to start SignalR server: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to start SignalR server: {ex.Message}", ex));
             return false;
         }
     }
 
-    public async Task StopAsync()
+    public override async Task StopAsync()
     {
         try
         {
             _cancellationTokenSource?.Cancel();
 
-            // Notify all clients of disconnection
-            foreach (var client in _connections.Values)
+            // Notify all clients about server shutdown
+            if (_host != null)
             {
-                ClientDisconnected?.Invoke(this, new ConnectionEventArgs(client.ConnectionInfo));
+                var hubContext = _host.Services.GetService<IHubContext<EnhancedMessagingHub>>();
+                if (hubContext != null)
+                {
+                    try
+                    {
+                        await hubContext.Clients.All.SendAsync("ServerShutdown", "Server is shutting down", CancellationToken.None);
+                        await Task.Delay(1000); // Give clients time to receive the message
+                    }
+                    catch (Exception ex)
+                    {
+                        OnErrorOccurred(new ErrorEventArgs($"Error sending shutdown notification: {ex.Message}", ex));
+                    }
+                }
             }
-            _connections.Clear();
+
+            // Notify about disconnections
+            foreach (var client in _clientConnections.Values)
+            {
+                OnClientDisconnected(new ConnectionEventArgs(client.ConnectionInfo));
+            }
+
+            _clientConnections.Clear();
+            _groups.Clear();
+            _clientGroups.Clear();
 
             if (_host != null)
             {
-                await _host.StopAsync(TimeSpan.FromSeconds(5));
+                await _host.StopAsync(TimeSpan.FromSeconds(10));
                 _host.Dispose();
                 _host = null;
             }
@@ -172,25 +263,25 @@ public class SignalRTransport(string address = "localhost", int port = 5003, str
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Error stopping SignalR server: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Error stopping SignalR server: {ex.Message}", ex));
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
+    public override async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
     {
         try
         {
             if (!IsRunning || _host == null)
                 return false;
 
-            var hubContext = _host.Services.GetRequiredService<IHubContext<MessagingHub>>();
+            var hubContext = _host.Services.GetRequiredService<IHubContext<EnhancedMessagingHub>>();
 
             if (string.IsNullOrEmpty(connectionId))
             {
                 return await BroadcastMessageAsync(message);
             }
 
-            if (_connections.ContainsKey(connectionId))
+            if (_clientConnections.ContainsKey(connectionId))
             {
                 await hubContext.Clients.Client(connectionId).SendAsync("ReceiveMessage", message);
                 return true;
@@ -200,107 +291,344 @@ public class SignalRTransport(string address = "localhost", int port = 5003, str
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to send SignalR message: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to send SignalR message: {ex.Message}", ex));
             return false;
         }
     }
 
-    public async Task<bool> BroadcastMessageAsync(Message message)
+    public override async Task<bool> BroadcastMessageAsync(Message message)
     {
         try
         {
             if (!IsRunning || _host == null)
                 return false;
 
-            var hubContext = _host.Services.GetRequiredService<IHubContext<MessagingHub>>();
+            var hubContext = _host.Services.GetRequiredService<IHubContext<EnhancedMessagingHub>>();
             await hubContext.Clients.All.SendAsync("ReceiveMessage", message);
             return true;
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to broadcast SignalR message: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to broadcast SignalR message: {ex.Message}", ex));
             return false;
         }
     }
 
-    internal void AddConnection(string connectionId, string userName)
+    protected override string GetClientAddress(object transportSpecificData)
+    {
+        return transportSpecificData is HubCallerContext context
+            ? context.GetHttpContext()?.Connection?.RemoteIpAddress?.ToString() ?? "Unknown"
+            : "Unknown";
+    }
+    #endregion
+
+    #region Client Management
+    internal void AddConnection(string connectionId, string userName, HubCallerContext context)
     {
         var connectionInfo = new ConnectionInfo
         {
-            Id = connectionId,
+            Id = userName, // Use userName as logical ID for routing
             Name = userName,
-            Address = $"{address}:{port}{path}",
+            Address = GetClientAddress(context),
+            ConnectedAt = DateTime.UtcNow,
+            IsActive = true,
             Properties = new Dictionary<string, object>
             {
-                ["Transport"] = "SignalR",
-                ["HubPath"] = path
+                ["SignalRConnectionId"] = connectionId,
+                ["UserAgent"] = context.GetHttpContext()?.Request?.Headers["User-Agent"].ToString() ?? "Unknown",
+                ["Protocol"] = "SignalR"
             }
         };
 
-        var clientInfo = new SignalRClientInfo(connectionInfo);
-        _connections.TryAdd(connectionId, clientInfo);
-        ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
+        var clientInfo = new EnhancedSignalRClientInfo(connectionInfo, connectionId, context);
+        _clientConnections[userName] = clientInfo;
+
+        RegisterClient(userName, userName, context);
+        OnClientDisconnected(new ConnectionEventArgs(connectionInfo));
     }
 
     internal void RemoveConnection(string connectionId)
     {
-        if (_connections.TryRemove(connectionId, out var clientInfo))
+        var clientToRemove = _clientConnections.Values.FirstOrDefault(c => c.SignalRConnectionId == connectionId);
+        if (clientToRemove != null)
         {
-            ClientDisconnected?.Invoke(this, new ConnectionEventArgs(clientInfo.ConnectionInfo));
+            var userName = clientToRemove.ConnectionInfo.Name;
+
+            if (_clientConnections.TryRemove(userName, out var removedClient))
+            {
+                // Remove from all groups
+                RemoveClientFromAllGroups(userName);
+                UnregisterClient(userName);
+                OnClientDisconnected(new ConnectionEventArgs(removedClient.ConnectionInfo));
+            }
         }
     }
 
     internal void OnMessageReceived(Message message, string connectionId)
     {
-        if (_connections.TryGetValue(connectionId, out var clientInfo))
+        var clientInfo = _clientConnections.Values.FirstOrDefault(c => c.SignalRConnectionId == connectionId);
+        if (clientInfo != null)
         {
             clientInfo.UpdateLastActivity();
-            MessageReceived?.Invoke(this, new MessageEventArgs(message, clientInfo.ConnectionInfo));
+            HandleReceivedMessage(message, message.Sender);
         }
     }
 
     internal void OnError(string error, string connectionId)
     {
-        var clientInfo = _connections.TryGetValue(connectionId, out var client) ? client : null;
-        ErrorOccurred?.Invoke(this, new ErrorEventArgs(error, null, clientInfo?.ConnectionInfo));
+        var clientInfo = _clientConnections.Values.FirstOrDefault(c => c.SignalRConnectionId == connectionId);
+        OnErrorOccurred(new ErrorEventArgs(error, null, clientInfo?.ConnectionInfo));
     }
 
-    public void Dispose()
+    internal List<EnhancedSignalRClientInfo> GetOnlineClients()
     {
-        if (!_disposed)
-        {
-            _disposed = true;
+        return _clientConnections.Values.ToList();
+    }
+    #endregion
 
-            try
+    #region Group Management
+    internal async Task<bool> CreateGroupAsync(string groupName, string creatorName)
+    {
+        lock (_lockObject)
+        {
+            if (_groups.ContainsKey(groupName))
+                return false;
+
+            _groups[groupName] = new HashSet<string> { creatorName };
+
+            if (!_clientGroups.TryGetValue(creatorName, out var clientGroups))
             {
-                StopAsync().Wait(5000);
+                clientGroups = new HashSet<string>();
+                _clientGroups[creatorName] = clientGroups;
             }
-            catch (Exception)
+            clientGroups.Add(groupName);
+        }
+
+        return true;
+    }
+
+    internal async Task<bool> JoinGroupAsync(string groupName, string userName, string connectionId)
+    {
+        try
+        {
+            if (_host == null) return false;
+
+            var hubContext = _host.Services.GetRequiredService<IHubContext<EnhancedMessagingHub>>();
+
+            // Add to SignalR group
+            await hubContext.Groups.AddToGroupAsync(connectionId, groupName);
+
+            // Add to our tracking
+            lock (_lockObject)
             {
-                // Ignore disposal errors
+                if (!_groups.TryGetValue(groupName, out var groupMembers))
+                {
+                    groupMembers = new HashSet<string>();
+                    _groups[groupName] = groupMembers;
+                }
+
+                groupMembers.Add(userName);
+
+                if (!_clientGroups.TryGetValue(userName, out var clientGroups))
+                {
+                    clientGroups = new HashSet<string>();
+                    _clientGroups[userName] = clientGroups;
+                }
+                clientGroups.Add(groupName);
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            OnErrorOccurred(new ErrorEventArgs($"Error joining group {groupName}: {ex.Message}", ex));
+            return false;
+        }
+    }
+
+    internal async Task<bool> LeaveGroupAsync(string groupName, string userName, string connectionId)
+    {
+        try
+        {
+            if (_host == null) return false;
+
+            var hubContext = _host.Services.GetRequiredService<IHubContext<EnhancedMessagingHub>>();
+
+            // Remove from SignalR group
+            await hubContext.Groups.RemoveFromGroupAsync(connectionId, groupName);
+
+            // Remove from our tracking
+            lock (_lockObject)
+            {
+                var success = false;
+
+                if (_groups.TryGetValue(groupName, out var groupMembers))
+                {
+                    success = groupMembers.Remove(userName);
+
+                    if (groupMembers.Count == 0)
+                    {
+                        _groups.TryRemove(groupName, out _);
+                    }
+                }
+
+                if (_clientGroups.TryGetValue(userName, out var clientGroups))
+                {
+                    clientGroups.Remove(groupName);
+                }
+
+                return success;
+            }
+        }
+        catch (Exception ex)
+        {
+            OnErrorOccurred(new ErrorEventArgs($"Error leaving group {groupName}: {ex.Message}", ex));
+            return false;
+        }
+    }
+
+    internal async Task<bool> SendGroupMessageAsync(string groupName, Message message)
+    {
+        try
+        {
+            if (_host == null) return false;
+
+            var hubContext = _host.Services.GetRequiredService<IHubContext<EnhancedMessagingHub>>();
+
+            // Create group message with metadata
+            var groupMessage = CreateGroupMessage(message, groupName);
+
+            await hubContext.Clients.Group(groupName).SendAsync("ReceiveMessage", groupMessage);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            OnErrorOccurred(new ErrorEventArgs($"Error sending group message: {ex.Message}", ex));
+            return false;
+        }
+    }
+
+    internal List<string> GetGroupMembers(string groupName)
+    {
+        lock (_lockObject)
+        {
+            return _groups.TryGetValue(groupName, out var members)
+                ? members.ToList()
+                : new List<string>();
+        }
+    }
+
+    internal List<string> GetClientGroups(string userName)
+    {
+        lock (_lockObject)
+        {
+            return _clientGroups.TryGetValue(userName, out var groups)
+                ? groups.ToList()
+                : new List<string>();
+        }
+    }
+
+    private void RemoveClientFromAllGroups(string userName)
+    {
+        lock (_lockObject)
+        {
+            if (_clientGroups.TryGetValue(userName, out var groups))
+            {
+                foreach (var groupName in groups.ToList())
+                {
+                    if (_groups.TryGetValue(groupName, out var groupMembers))
+                    {
+                        groupMembers.Remove(userName);
+                        if (groupMembers.Count == 0)
+                        {
+                            _groups.TryRemove(groupName, out _);
+                        }
+                    }
+                }
+                _clientGroups.TryRemove(userName, out _);
             }
         }
     }
 
+    private Message CreateGroupMessage(Message originalMessage, string groupName)
+    {
+        return new Message
+        {
+            Id = originalMessage.Id,
+            Content = originalMessage.Content,
+            Sender = originalMessage.Sender,
+            Receiver = originalMessage.Receiver,
+            Type = originalMessage.Type,
+            Timestamp = originalMessage.Timestamp,
+            Priority = originalMessage.Priority,
+            ReplyToId = originalMessage.ReplyToId,
+            RequiresAcknowledgment = originalMessage.RequiresAcknowledgment,
+            ExpiresIn = originalMessage.ExpiresIn,
+            Tags = originalMessage.Tags,
+            Metadata = new Dictionary<string, object>(originalMessage.Metadata)
+            {
+                ["GroupName"] = groupName,
+                ["IsGroupMessage"] = true,
+                ["OriginalReceiver"] = originalMessage.Receiver
+            }
+        };
+    }
+    #endregion
+
+    #region Statistics and Monitoring
+    internal SignalRServerStatistics GetStatistics()
+    {
+        return new SignalRServerStatistics
+        {
+            ActiveConnections = _clientConnections.Count,
+            ActiveGroups = _groups.Count,
+            TotalMessages = 0, // Could be tracked with a counter
+            Uptime = Uptime,
+            IsRunning = IsRunning,
+            HubPath = path,
+            ServerAddress = $"{address}:{port}"
+        };
+    }
     #endregion
 }
 
-#region SignalR Hub Implementation
-
-public class MessagingHub(SignalRTransport transport) : Hub
+/// <summary>
+/// Enhanced SignalR Hub implementation with comprehensive messaging features
+/// </summary>
+public class EnhancedMessagingHub : Hub
 {
+    private readonly SignalRTransport _transport;
+    private readonly ILogger<EnhancedMessagingHub> _logger;
+
+    public EnhancedMessagingHub(SignalRTransport transport, ILogger<EnhancedMessagingHub> logger)
+    {
+        _transport = transport;
+        _logger = logger;
+    }
+
+    #region Connection Management
     public async Task JoinAsync(string userName)
     {
         try
         {
-            transport.AddConnection(Context.ConnectionId, userName);
+            _logger.LogInformation("User {UserName} joining with connection {ConnectionId}", userName, Context.ConnectionId);
+
+            _transport.AddConnection(Context.ConnectionId, userName, Context);
+
+            // Send welcome message
+            await Clients.Caller.SendAsync("SystemMessage", $"Welcome {userName}! You are now connected to the messaging server.");
 
             // Notify other clients
             await Clients.Others.SendAsync("UserConnected", Context.ConnectionId, userName);
+
+            // Send current online users list
+            var onlineUsers = _transport.GetOnlineClients().Select(c => new { c.ConnectionInfo.Id, c.ConnectionInfo.Name }).ToList();
+            await Clients.Caller.SendAsync("OnlineUsersList", onlineUsers);
         }
         catch (Exception ex)
         {
-            transport.OnError($"Join error: {ex.Message}", Context.ConnectionId);
+            _logger.LogError(ex, "Error in JoinAsync for user {UserName}", userName);
+            _transport.OnError($"Join error: {ex.Message}", Context.ConnectionId);
         }
     }
 
@@ -308,64 +636,147 @@ public class MessagingHub(SignalRTransport transport) : Hub
     {
         try
         {
-            transport.RemoveConnection(Context.ConnectionId);
+            _logger.LogInformation("User {UserName} leaving with connection {ConnectionId}", userName, Context.ConnectionId);
+
+            _transport.RemoveConnection(Context.ConnectionId);
 
             // Notify other clients
             await Clients.Others.SendAsync("UserDisconnected", Context.ConnectionId, userName);
         }
         catch (Exception ex)
         {
-            transport.OnError($"Leave error: {ex.Message}", Context.ConnectionId);
+            _logger.LogError(ex, "Error in LeaveAsync for user {UserName}", userName);
+            _transport.OnError($"Leave error: {ex.Message}", Context.ConnectionId);
         }
     }
+    #endregion
 
+    #region Message Handling
     public async Task SendMessageAsync(Message message)
     {
         try
         {
+            _logger.LogDebug("Received message from {Sender} to {Receiver}", message.Sender, message.Receiver);
+
             // Update message sender if not set
             if (string.IsNullOrEmpty(message.Sender))
             {
-                message.Sender = Context.UserIdentifier ?? Context.ConnectionId;
+                var clientInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+                message.Sender = clientInfo?.ConnectionInfo.Name ?? Context.UserIdentifier ?? Context.ConnectionId;
             }
 
-            // Handle message routing
-            if (string.IsNullOrEmpty(message.Receiver))
+            // Handle different message types
+            if (string.IsNullOrEmpty(message.Receiver) || message.Receiver == "*")
             {
-                // Broadcast to all clients
-                transport.OnMessageReceived(message, Context.ConnectionId);
+                // Broadcast message
+                await Clients.Others.SendAsync("ReceiveMessage", message);
             }
             else
             {
-                // Send to specific receiver
-                await Clients.User(message.Receiver).SendAsync("ReceiveMessage", message);
+                // Direct message - find target client
+                var targetClient = _transport.GetOnlineClients().FirstOrDefault(c => c.ConnectionInfo.Name == message.Receiver);
+                if (targetClient != null)
+                {
+                    await Clients.Client(targetClient.SignalRConnectionId).SendAsync("ReceiveMessage", message);
+
+                    // Send delivery confirmation to sender
+                    await Clients.Caller.SendAsync("MessageDelivered", message.Id, message.Receiver);
+                }
+                else
+                {
+                    // Target not found
+                    await Clients.Caller.SendAsync("MessageError", message.Id, $"User '{message.Receiver}' is not online");
+                }
             }
 
-            // Notify the transport
-            //transport.OnMessageReceived(message, Context.ConnectionId);
+            // Notify transport for processing
+            _transport.OnMessageReceived(message, Context.ConnectionId);
         }
         catch (Exception ex)
         {
-            transport.OnError($"Send message error: {ex.Message}", Context.ConnectionId);
+            _logger.LogError(ex, "Error in SendMessageAsync");
+            _transport.OnError($"Send message error: {ex.Message}", Context.ConnectionId);
+            await Clients.Caller.SendAsync("MessageError", message?.Id ?? "unknown", ex.Message);
         }
     }
 
-
-    public async Task SendMessageToGroupAsync(string groupName, Message message)
+    public async Task SendDirectMessageAsync(string recipientName, string content, MessageType messageType = MessageType.Text)
     {
         try
         {
-            if (string.IsNullOrEmpty(message.Sender))
-            {
-                message.Sender = Context.UserIdentifier ?? Context.ConnectionId;
-            }
+            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
 
-            await Clients.Group(groupName).SendAsync("ReceiveMessage", message);
-            transport.OnMessageReceived(message, Context.ConnectionId);
+            var message = new Message
+            {
+                Content = content,
+                Sender = senderName,
+                Receiver = recipientName,
+                Type = messageType,
+                Timestamp = DateTime.UtcNow
+            };
+
+            await SendMessageAsync(message);
         }
         catch (Exception ex)
         {
-            transport.OnError($"Send to group error: {ex.Message}", Context.ConnectionId);
+            _logger.LogError(ex, "Error in SendDirectMessageAsync");
+            await Clients.Caller.SendAsync("MessageError", "direct_message", ex.Message);
+        }
+    }
+
+    public async Task BroadcastMessageAsync(string content, MessageType messageType = MessageType.Text)
+    {
+        try
+        {
+            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
+
+            var message = new Message
+            {
+                Content = content,
+                Sender = senderName,
+                Receiver = "*",
+                Type = messageType,
+                Timestamp = DateTime.UtcNow
+            };
+
+            await SendMessageAsync(message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in BroadcastMessageAsync");
+            await Clients.Caller.SendAsync("MessageError", "broadcast", ex.Message);
+        }
+    }
+    #endregion
+
+    #region Group Management
+    public async Task CreateGroupAsync(string groupName)
+    {
+        try
+        {
+            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
+
+            var success = await _transport.CreateGroupAsync(groupName, senderName);
+
+            if (success)
+            {
+                await _transport.JoinGroupAsync(groupName, senderName, Context.ConnectionId);
+                await Clients.Caller.SendAsync("GroupCreated", groupName);
+
+                _logger.LogInformation("Group {GroupName} created by {UserName}", groupName, senderName);
+            }
+            else
+            {
+                await Clients.Caller.SendAsync("GroupError", groupName, "Group already exists");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating group {GroupName}", groupName);
+            await Clients.Caller.SendAsync("GroupError", groupName, ex.Message);
         }
     }
 
@@ -373,12 +784,31 @@ public class MessagingHub(SignalRTransport transport) : Hub
     {
         try
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
-            await Clients.Group(groupName).SendAsync("UserJoinedGroup", Context.ConnectionId, groupName);
+            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
+
+            var success = await _transport.JoinGroupAsync(groupName, senderName, Context.ConnectionId);
+
+            if (success)
+            {
+                await Clients.Caller.SendAsync("GroupJoined", groupName);
+                await Clients.Group(groupName).SendAsync("UserJoinedGroup", senderName, groupName);
+
+                // Send group member list
+                var members = _transport.GetGroupMembers(groupName);
+                await Clients.Caller.SendAsync("GroupMembers", groupName, members);
+
+                _logger.LogInformation("User {UserName} joined group {GroupName}", senderName, groupName);
+            }
+            else
+            {
+                await Clients.Caller.SendAsync("GroupError", groupName, "Failed to join group");
+            }
         }
         catch (Exception ex)
         {
-            transport.OnError($"Join group error: {ex.Message}", Context.ConnectionId);
+            _logger.LogError(ex, "Error joining group {GroupName}", groupName);
+            await Clients.Caller.SendAsync("GroupError", groupName, ex.Message);
         }
     }
 
@@ -386,17 +816,132 @@ public class MessagingHub(SignalRTransport transport) : Hub
     {
         try
         {
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
-            await Clients.Group(groupName).SendAsync("UserLeftGroup", Context.ConnectionId, groupName);
+            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
+
+            var success = await _transport.LeaveGroupAsync(groupName, senderName, Context.ConnectionId);
+
+            if (success)
+            {
+                await Clients.Caller.SendAsync("GroupLeft", groupName);
+                await Clients.Group(groupName).SendAsync("UserLeftGroup", senderName, groupName);
+
+                _logger.LogInformation("User {UserName} left group {GroupName}", senderName, groupName);
+            }
+            else
+            {
+                await Clients.Caller.SendAsync("GroupError", groupName, "Failed to leave group or not in group");
+            }
         }
         catch (Exception ex)
         {
-            transport.OnError($"Leave group error: {ex.Message}", Context.ConnectionId);
+            _logger.LogError(ex, "Error leaving group {GroupName}", groupName);
+            await Clients.Caller.SendAsync("GroupError", groupName, ex.Message);
         }
     }
 
+    public async Task SendGroupMessageAsync(string groupName, string content)
+    {
+        try
+        {
+            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
+
+            var message = new Message
+            {
+                Content = content,
+                Sender = senderName,
+                Receiver = $"group:{groupName}",
+                Type = MessageType.Text,
+                Timestamp = DateTime.UtcNow
+            };
+
+            var success = await _transport.SendGroupMessageAsync(groupName, message);
+
+            if (success)
+            {
+                await Clients.Caller.SendAsync("GroupMessageSent", groupName, message.Id);
+            }
+            else
+            {
+                await Clients.Caller.SendAsync("GroupError", groupName, "Failed to send group message");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending group message to {GroupName}", groupName);
+            await Clients.Caller.SendAsync("GroupError", groupName, ex.Message);
+        }
+    }
+
+    public async Task GetGroupMembersAsync(string groupName)
+    {
+        try
+        {
+            var members = _transport.GetGroupMembers(groupName);
+            await Clients.Caller.SendAsync("GroupMembers", groupName, members);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting group members for {GroupName}", groupName);
+            await Clients.Caller.SendAsync("GroupError", groupName, ex.Message);
+        }
+    }
+    #endregion
+
+    #region Information and Status
+    public async Task GetOnlineUsersAsync()
+    {
+        try
+        {
+            var onlineUsers = _transport.GetOnlineClients().Select(c => new
+            {
+                c.ConnectionInfo.Id,
+                c.ConnectionInfo.Name,
+                c.ConnectionInfo.ConnectedAt,
+                Groups = _transport.GetClientGroups(c.ConnectionInfo.Name)
+            }).ToList();
+
+            await Clients.Caller.SendAsync("OnlineUsersList", onlineUsers);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting online users");
+            await Clients.Caller.SendAsync("SystemError", "Failed to get online users");
+        }
+    }
+
+    public async Task GetServerStatusAsync()
+    {
+        try
+        {
+            var stats = _transport.GetStatistics();
+            await Clients.Caller.SendAsync("ServerStatus", stats);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting server status");
+            await Clients.Caller.SendAsync("SystemError", "Failed to get server status");
+        }
+    }
+
+    public async Task PingAsync()
+    {
+        try
+        {
+            await Clients.Caller.SendAsync("Pong", DateTime.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in PingAsync");
+        }
+    }
+    #endregion
+
+    #region Hub Events
     public override async Task OnConnectedAsync()
     {
+        _logger.LogInformation("New connection: {ConnectionId}", Context.ConnectionId);
         await base.OnConnectedAsync();
     }
 
@@ -404,30 +949,43 @@ public class MessagingHub(SignalRTransport transport) : Hub
     {
         try
         {
-            transport.RemoveConnection(Context.ConnectionId);
+            _logger.LogInformation("Connection disconnected: {ConnectionId}, Exception: {Exception}",
+                Context.ConnectionId, exception?.Message);
+
+            _transport.RemoveConnection(Context.ConnectionId);
 
             if (exception != null)
             {
-                transport.OnError($"Disconnected with error: {exception.Message}", Context.ConnectionId);
+                _transport.OnError($"Disconnected with error: {exception.Message}", Context.ConnectionId);
             }
         }
         catch (Exception ex)
         {
-            transport.OnError($"Disconnect handling error: {ex.Message}", Context.ConnectionId);
+            _logger.LogError(ex, "Error in OnDisconnectedAsync");
+            _transport.OnError($"Disconnect handling error: {ex.Message}", Context.ConnectionId);
         }
 
         await base.OnDisconnectedAsync(exception);
     }
+    #endregion
 }
 
-#endregion
-
-#region Helper Classes
-
-internal class SignalRClientInfo(ConnectionInfo connectionInfo)
+/// <summary>
+/// Enhanced SignalR client information container
+/// </summary>
+internal class EnhancedSignalRClientInfo
 {
-    public ConnectionInfo ConnectionInfo { get; } = connectionInfo;
+    public ConnectionInfo ConnectionInfo { get; }
+    public string SignalRConnectionId { get; }
+    public HubCallerContext Context { get; }
     public DateTime LastActivity { get; private set; } = DateTime.UtcNow;
+
+    public EnhancedSignalRClientInfo(ConnectionInfo connectionInfo, string signalRConnectionId, HubCallerContext context)
+    {
+        ConnectionInfo = connectionInfo;
+        SignalRConnectionId = signalRConnectionId;
+        Context = context;
+    }
 
     public void UpdateLastActivity()
     {
@@ -435,4 +993,16 @@ internal class SignalRClientInfo(ConnectionInfo connectionInfo)
     }
 }
 
-#endregion
+/// <summary>
+/// SignalR server statistics
+/// </summary>
+public class SignalRServerStatistics
+{
+    public int ActiveConnections { get; set; }
+    public int ActiveGroups { get; set; }
+    public long TotalMessages { get; set; }
+    public TimeSpan Uptime { get; set; }
+    public bool IsRunning { get; set; }
+    public string HubPath { get; set; } = string.Empty;
+    public string ServerAddress { get; set; } = string.Empty;
+}

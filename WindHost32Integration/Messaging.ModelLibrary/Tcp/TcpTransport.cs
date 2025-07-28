@@ -1,58 +1,24 @@
-﻿using System.Collections.Concurrent;
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
 using Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.ModelLibrary.Tcp;
 
-public class TcpTransport : IMessageTransport
+public class TcpTransport : MessageTransportBase
 {
     #region Fields
-
-    private readonly ConcurrentDictionary<string, TcpClientConnection> _connections = new();
     private TcpListener? _listener;
     private CancellationTokenSource? _cancellationTokenSource;
     private Task? _serverTask;
-    private bool _disposed;
-
-    #endregion
-
-    #region Events
-
-
-    public event EventHandler<MessageEventArgs>? MessageReceived;
-    public event EventHandler<ConnectionEventArgs>? ClientConnected;
-    public event EventHandler<ConnectionEventArgs>? ClientDisconnected;
-    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
-
     #endregion
 
     #region Properties
-
-    public bool IsRunning { get; private set; }
-    public TransportType TransportType => TransportType.Tcp;
-    public IReadOnlyList<ConnectionInfo> Connections => _connections.Values.Select(c => c.Info).ToList();
-
+    public override bool IsRunning { get; protected set; }
+    public override TransportType TransportType => TransportType.Tcp;
     #endregion
 
-    #region Methods
-
-    /// <summary>
-    /// Starts a TCP server using the specified configuration.
-    /// Stops any existing listener before starting a new one.
-    /// 
-    /// Optional configuration dictionary keys:
-    /// - "Host" (string, optional): The IP address or hostname to bind the server to. 
-    ///   Defaults to "localhost" (binds to loopback address).
-    /// - "Port" (int, optional): The port number to listen on. Defaults to 8080.
-    /// 
-    /// Initializes the TCP listener and begins accepting incoming client connections asynchronously.
-    /// Raises the ErrorOccurred event if startup fails.
-    /// </summary>
-    /// <param name="configuration">Optional dictionary of server configuration settings.</param>
-    /// <returns>True if the server started successfully; otherwise, false.</returns>
-    public async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
+    public override async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
     {
         try
         {
@@ -73,12 +39,12 @@ public class TcpTransport : IMessageTransport
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to start TCP server: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to start TCP server: {ex.Message}", ex));
             return false;
         }
     }
 
-    public async Task StopAsync()
+    public override async Task StopAsync()
     {
         try
         {
@@ -89,13 +55,11 @@ public class TcpTransport : IMessageTransport
                 try
                 {
                     if (await Task.WhenAny(_serverTask, Task.Delay(3000)) == _serverTask)
-                    {
                         await _serverTask;
-                    }
                 }
-                catch (Exception)
+                catch
                 {
-                    // Ignore server task exceptions during shutdown
+                    /*ignored*/
                 }
                 _serverTask = null;
             }
@@ -104,41 +68,36 @@ public class TcpTransport : IMessageTransport
             {
                 _listener?.Stop();
             }
-            catch (Exception)
-            {
-                // Ignore listener stop errors
-            }
+            catch {  /*ignored*/}
 
             // Dispose all connections
-            var connectionTasks = _connections.Values.Select(connection => Task.Run(() => connection.Dispose()));
+            var connectionTasks = _connections.Values.Select(connection =>
+                Task.Run(() => (connection.TransportData as TcpClientConnection)?.Dispose()));
+
             try
             {
                 await Task.WhenAll(connectionTasks);
             }
-            catch (Exception)
-            {
-                // Ignore connection disposal errors
-            }
+            catch { /*ignored*/ }
 
             _connections.Clear();
             IsRunning = false;
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Error stopping server: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Error stopping server: {ex.Message}", ex));
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
+    public override async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
     {
         try
         {
             if (string.IsNullOrEmpty(connectionId))
-            {
                 return await BroadcastMessageAsync(message);
-            }
 
-            if (_connections.TryGetValue(connectionId, out var connection))
+            if (_connections.TryGetValue(connectionId, out var clientInfo) &&
+                clientInfo.TransportData is TcpClientConnection connection)
             {
                 return await connection.SendMessageAsync(message);
             }
@@ -147,24 +106,34 @@ public class TcpTransport : IMessageTransport
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to send message: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to send message: {ex.Message}", ex));
             return false;
         }
     }
 
-    public async Task<bool> BroadcastMessageAsync(Message message)
+    public override async Task<bool> BroadcastMessageAsync(Message message)
     {
         try
         {
-            var tasks = _connections.Values.Select(connection => connection.SendMessageAsync(message));
+            var tasks = _connections.Values
+                .Where(c => c.TransportData is TcpClientConnection)
+                .Select(c => ((TcpClientConnection)c.TransportData).SendMessageAsync(message));
+
             var results = await Task.WhenAll(tasks);
             return results.Any(r => r);
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to broadcast message: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to broadcast message: {ex.Message}", ex));
             return false;
         }
+    }
+
+    protected override string GetClientAddress(object transportSpecificData)
+    {
+        return transportSpecificData is TcpClientConnection conn
+            ? conn.RemoteAddress
+            : "Unknown";
     }
 
     private async Task RunServerAsync()
@@ -176,39 +145,24 @@ public class TcpTransport : IMessageTransport
                 if (_listener != null)
                 {
                     var tcpClient = await _listener.AcceptTcpClientAsync();
+                    var remoteAddress = tcpClient.Client.RemoteEndPoint?.ToString() ?? "Unknown";
 
-                    var connectionInfo = new ConnectionInfo
-                    {
-                        Id = Guid.NewGuid().ToString(),
-                        Name = "Unknown",
-                        Address = tcpClient.Client.RemoteEndPoint?.ToString() ?? "Unknown"
-                    };
-
-                    var clientConnection = new TcpClientConnection(tcpClient, connectionInfo, _cancellationTokenSource.Token);
+                    var clientConnection = new TcpClientConnection(tcpClient, remoteAddress, _cancellationTokenSource.Token);
                     clientConnection.MessageReceived += OnClientMessageReceived;
                     clientConnection.Disconnected += OnClientDisconnected;
                     clientConnection.ErrorOccurred += OnClientErrorOccurred;
 
-                    _connections.TryAdd(connectionInfo.Id, clientConnection);
-                    ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
-
+                    // Will be properly registered when we receive the CLIENT_REGISTER message
                     clientConnection.StartReading();
                 }
             }
-            catch (ObjectDisposedException)
-            {
-                // Listener was disposed - this is expected during shutdown
-                break;
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            catch (ObjectDisposedException) { break; }
+            catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
                 if (!_cancellationTokenSource.Token.IsCancellationRequested)
                 {
-                    ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Server error: {ex.Message}", ex));
+                    OnErrorOccurred(new ErrorEventArgs($"Server error: {ex.Message}", ex));
                 }
             }
         }
@@ -216,72 +170,45 @@ public class TcpTransport : IMessageTransport
 
     private void OnClientMessageReceived(object? sender, MessageEventArgs e)
     {
-        // Update connection name if this is the first message
-        if (sender is TcpClientConnection connection && connection.Info.Name == "Unknown")
+        if (sender is TcpClientConnection connection)
         {
-            connection.Info.Name = e.Message.Sender;
-        }
+            // Register client if this is a registration message
+            if (e.Message.Type == MessageType.System && e.Message.Content == "CLIENT_REGISTER")
+            {
+                RegisterClient(e.Message.Sender, e.Message.Sender, connection);
+                return;
+            }
 
-        MessageReceived?.Invoke(this, e);
+            HandleReceivedMessage(e.Message, e.Message.Sender);
+        }
     }
 
     private void OnClientDisconnected(object? sender, ConnectionEventArgs e)
     {
-        _connections.TryRemove(e.Connection.Id, out _);
-        ClientDisconnected?.Invoke(this, e);
+        UnregisterClient(e.Connection.Id);
     }
 
     private void OnClientErrorOccurred(object? sender, ErrorEventArgs e)
     {
-        ErrorOccurred?.Invoke(this, e);
+        OnErrorOccurred(e);
     }
 
-    public void Dispose()
-    {
-        if (!_disposed)
-        {
-            _disposed = true;
-
-            try
-            {
-                StopAsync().Wait(3000); // Wait up to 3 seconds
-            }
-            catch (Exception)
-            {
-                // Ignore disposal errors
-            }
-        }
-    }
-    #endregion
-
-    #region TcpClientConnection
-    private class TcpClientConnection(TcpClient tcpClient, ConnectionInfo info, CancellationToken cancellationToken)
+    #region Enhanced TCP Client Connection
+    private class TcpClientConnection(
+        TcpClient tcpClient,
+        string remoteAddress,
+        CancellationToken cancellationToken)
         : IDisposable
     {
-        #region Fields
-
         private readonly NetworkStream _stream = tcpClient.GetStream();
         private Task? _readTask;
         private bool _disposed;
 
-        #endregion
-
-        #region Events
+        public string RemoteAddress { get; } = remoteAddress;
 
         public event EventHandler<MessageEventArgs>? MessageReceived;
         public event EventHandler<ConnectionEventArgs>? Disconnected;
         public event EventHandler<ErrorEventArgs>? ErrorOccurred;
-
-        #endregion
-
-        #region Properties
-
-        public ConnectionInfo Info { get; } = info;
-
-
-        #endregion
-
-        #region Methods
 
         public void StartReading()
         {
@@ -302,17 +229,9 @@ public class TcpTransport : IMessageTransport
                 await _stream.FlushAsync();
                 return true;
             }
-            catch (ObjectDisposedException)
-            {
-                return false;
-            }
-            catch (InvalidOperationException)
-            {
-                return false;
-            }
             catch (Exception ex)
             {
-                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Send error: {ex.Message}", ex, Info));
+                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Send error: {ex.Message}", ex));
                 return false;
             }
         }
@@ -333,39 +252,45 @@ public class TcpTransport : IMessageTransport
                         if (!string.IsNullOrWhiteSpace(json))
                         {
                             var message = JsonSerializer.Deserialize<Message>(json);
-                            if (message != null) MessageReceived?.Invoke(this, new MessageEventArgs(message, Info));
+                            if (message != null)
+                            {
+                                var connectionInfo = new ConnectionInfo
+                                {
+                                    Id = message.Sender,
+                                    Name = message.Sender,
+                                    Address = RemoteAddress
+                                };
+                                MessageReceived?.Invoke(this, new MessageEventArgs(message, connectionInfo));
+                            }
                         }
                     }
                     catch (JsonException ex)
                     {
-                        ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex, Info));
+                        ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex));
                     }
                 }
             }
-            catch (ObjectDisposedException)
-            {
-                // Stream was disposed - this is expected during shutdown
-            }
-            catch (InvalidOperationException)
-            {
-                // Stream is closed - this is expected during disconnect
-            }
-            catch (OperationCanceledException)
-            {
-                // Cancellation requested - this is expected during shutdown
-            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
                 if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
-                    ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex, Info));
+                    ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex));
                 }
             }
             finally
             {
                 if (!_disposed)
                 {
-                    Disconnected?.Invoke(this, new ConnectionEventArgs(Info));
+                    var connectionInfo = new ConnectionInfo
+                    {
+                        Id = "Unknown",
+                        Name = "Unknown",
+                        Address = RemoteAddress
+                    };
+                    Disconnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
                 }
             }
         }
@@ -378,38 +303,27 @@ public class TcpTransport : IMessageTransport
 
                 try
                 {
+                    // ReSharper disable once ConditionalAccessQualifierIsNonNullableAccordingToAPIContract
                     _stream?.Close();
+                    // ReSharper disable once ConditionalAccessQualifierIsNonNullableAccordingToAPIContract
                     tcpClient?.Close();
                 }
-                catch (Exception)
-                {
-                    // Ignore disposal errors
-                }
+                catch { /*ignored*/ }
 
                 try
                 {
                     _stream?.Dispose();
                     tcpClient?.Dispose();
                 }
-                catch (Exception)
-                {
-                    // Ignore disposal errors
-                }
+                catch { /*ignored*/ }
 
                 try
                 {
-                    _readTask?.Wait(1000); // Wait up to 1 second for read task to complete
+                    _readTask?.Wait(1000);
                 }
-                catch (Exception)
-                {
-                    // Ignore task wait errors
-                }
+                catch { /*ignored*/ }
             }
         }
     }
-
-    #endregion
-
-
     #endregion
 }

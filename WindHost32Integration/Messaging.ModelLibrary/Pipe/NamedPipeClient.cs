@@ -3,53 +3,21 @@ using System.Text.Json;
 using Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.ModelLibrary.Pipe;
-
-public class NamedPipeClient : IMessageClient
+public class NamedPipeClient : MessageClientBase
 {
     #region Fields
-
     private NamedPipeClientStream? _pipeClient;
     private Task? _readTask;
     private CancellationTokenSource? _cancellationTokenSource;
-    private bool _disposed;
-
-    #endregion
-
-    #region Events
-
-    public event EventHandler<MessageEventArgs>? MessageReceived;
-    public event EventHandler<ConnectionEventArgs>? Connected;
-    public event EventHandler<ConnectionEventArgs>? Disconnected;
-    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
-
     #endregion
 
     #region Properties
-    public bool IsConnected => _pipeClient?.IsConnected == true;
-    public ConnectionInfo? ConnectionInfo { get; private set; }
-    public TransportType TransportType => TransportType.NamedPipe;
+    public override bool IsConnected => _pipeClient?.IsConnected == true;
+    public override ConnectionInfo? ConnectionInfo { get; protected set; }
+    public override TransportType TransportType => TransportType.NamedPipe;
     #endregion
 
-    #region Methods
-
-    /// <summary>
-    /// Establishes a connection to a named pipe server using the provided configuration settings.
-    /// Disconnects any existing connection before initiating a new one.
-    /// 
-    /// Configuration dictionary keys:
-    /// - "ServerName" (string, optional): The name of the pipe server machine. Use "." for the local machine. Defaults to ".".
-    /// - "PipeName" (string, optional): The name of the pipe to connect to. Defaults to "GenericMessagingApp".
-    /// - "Timeout" (int, optional): Timeout in milliseconds for the connection attempt. Defaults to 5000.
-    /// - "ClientName" (string, optional): The identifier used for this client. Defaults to the current user's name.
-    /// 
-    /// Initializes a NamedPipeClientStream, attempts to connect asynchronously with the given timeout,
-    /// and starts listening for incoming messages.
-    /// Triggers the Connected event on successful connection, or ErrorOccurred on failure.
-    /// </summary>
-    /// <param name="configuration">Dictionary containing named pipe connection configuration.</param>
-    /// <returns>True if the connection was successful; otherwise, false.</returns>
-
-    public async Task<bool> ConnectAsync(Dictionary<string, object>? configuration)
+    public override async Task<bool> ConnectAsync(Dictionary<string, object>? configuration)
     {
         try
         {
@@ -61,36 +29,58 @@ public class NamedPipeClient : IMessageClient
             var clientName = configuration?.GetValueOrDefault("ClientName", Environment.UserName) as string ?? Environment.UserName;
 
             _cancellationTokenSource = new CancellationTokenSource();
-            _pipeClient = new NamedPipeClientStream(
-                serverName,
-                pipeName,
-                PipeDirection.InOut,
-                PipeOptions.Asynchronous);
+            _pipeClient = new NamedPipeClientStream(serverName, pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
 
             await _pipeClient.ConnectAsync(timeout);
 
             ConnectionInfo = new ConnectionInfo
             {
-                Id = Guid.NewGuid().ToString(),
+                Id = clientName, // Use client name as ID for easier routing
                 Name = clientName,
-                Address = $"{serverName}\\{pipeName}"
+                Address = $"{serverName}\\{pipeName}",
+                ConnectedAt = DateTime.UtcNow,
+                IsActive = true
             };
+
             _readTask = Task.Run(ReadMessagesAsync, _cancellationTokenSource.Token);
 
-            Connected?.Invoke(this, new ConnectionEventArgs(ConnectionInfo));
+            // Send registration message
+            var registrationMessage = new Message
+            {
+                Content = "CLIENT_REGISTER",
+                Sender = clientName,
+                Receiver = "System",
+                Type = MessageType.System
+            };
+            await SendMessageAsync(registrationMessage);
+
+            OnConnected(new ConnectionEventArgs(ConnectionInfo));
             return true;
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Connection failed: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Connection failed: {ex.Message}", ex));
             return false;
         }
     }
 
-    public async Task DisconnectAsync()
+    public override async Task DisconnectAsync()
     {
         try
         {
+            // Send unregister message
+            if (IsConnected && ConnectionInfo != null)
+            {
+                var unregisterMessage = new Message
+                {
+                    Content = "CLIENT_UNREGISTER",
+                    Sender = ConnectionInfo.Name,
+                    Receiver = "System",
+                    Type = MessageType.System
+                };
+                await SendMessageAsync(unregisterMessage);
+            }
+
             _cancellationTokenSource?.Cancel();
 
             if (_readTask != null)
@@ -98,13 +88,11 @@ public class NamedPipeClient : IMessageClient
                 try
                 {
                     if (await Task.WhenAny(_readTask, Task.Delay(2000)) == _readTask)
-                    {
                         await _readTask;
-                    }
                 }
-                catch (Exception)
+                catch
                 {
-                    // Ignore exceptions during task wait
+                    /*ignore*/
                 }
                 _readTask = null;
             }
@@ -113,9 +101,9 @@ public class NamedPipeClient : IMessageClient
             {
                 _pipeClient?.Close();
             }
-            catch (Exception)
+            catch
             {
-                // Ignore close errors
+                /*ignore*/
             }
 
             _pipeClient?.Dispose();
@@ -123,21 +111,25 @@ public class NamedPipeClient : IMessageClient
 
             if (ConnectionInfo != null)
             {
-                Disconnected?.Invoke(this, new ConnectionEventArgs(ConnectionInfo));
+                OnDisconnected(new ConnectionEventArgs(ConnectionInfo));
                 ConnectionInfo = null;
             }
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Disconnection error: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Disconnection error: {ex.Message}", ex));
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message)
+    public override async Task<bool> SendMessageAsync(Message message)
     {
         try
         {
             if (!IsConnected || _disposed) return false;
+
+            // Ensure sender is set
+            if (string.IsNullOrEmpty(message.Sender))
+                message.Sender = ConnectionInfo?.Name ?? "Unknown";
 
             var json = JsonSerializer.Serialize(message);
             if (_pipeClient != null)
@@ -149,17 +141,9 @@ public class NamedPipeClient : IMessageClient
 
             return true;
         }
-        catch (ObjectDisposedException)
-        {
-            return false;
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
-        }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Send error: {ex.Message}", ex, ConnectionInfo));
+            OnErrorOccurred(new ErrorEventArgs($"Send error: {ex.Message}", ex, ConnectionInfo));
             return false;
         }
     }
@@ -181,53 +165,40 @@ public class NamedPipeClient : IMessageClient
                     {
                         var message = JsonSerializer.Deserialize<Message>(json);
                         if (message != null && ConnectionInfo is not null)
-                            MessageReceived?.Invoke(this, new MessageEventArgs(message, ConnectionInfo));
+                            OnMessageReceived(new MessageEventArgs(message, ConnectionInfo));
                     }
                     catch (JsonException ex)
                     {
-                        ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex, ConnectionInfo));
+                        OnErrorOccurred(new ErrorEventArgs($"Message parse error: {ex.Message}", ex, ConnectionInfo));
                     }
                 }
             }
         }
-        catch (ObjectDisposedException)
-        {
-            // Pipe was disposed - this is expected during shutdown
-        }
-        catch (InvalidOperationException)
-        {
-            // Pipe is closed - this is expected during disconnect
-        }
-        catch (OperationCanceledException)
-        {
-            // Cancellation requested - this is expected during shutdown
-        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             if (_cancellationTokenSource is { Token.IsCancellationRequested: false } && !_disposed)
             {
-                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex, ConnectionInfo));
+                OnErrorOccurred(new ErrorEventArgs($"Read error: {ex.Message}", ex, ConnectionInfo));
             }
         }
     }
 
-    public void Dispose()
+    public override void Dispose()
     {
         if (!_disposed)
         {
-            _disposed = true;
-
+            base.Dispose();
             try
             {
-                DisconnectAsync().Wait(2000); // Wait up to 2 seconds
+                DisconnectAsync().Wait(2000);
             }
-            catch (Exception)
+            catch
             {
-                // Ignore disposal errors
+                /*ignore*/
             }
         }
     }
-
-    #endregion
-
 }

@@ -1,0 +1,121 @@
+﻿<Window
+    x:Class="DockingManagerTestApplication.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:local="clr-namespace:DockingManagerTestApplication"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:views="clr-namespace:DockingManagerTestApplication.Views"
+    Title="MainWindow"
+    Width="800"
+    Height="450"
+    mc:Ignorable="d">
+    <Window.Resources>
+        <!--  DataTemplate for SolutionExplorer  -->
+        <DataTemplate x:Key="SolutionExplorerTemplate" DataType="{x:Type local:SolutionExplorerViewModel}">
+            <views:SolutionExplorerView />
+        </DataTemplate>
+
+        <!--  DataTemplate for Properties  -->
+        <DataTemplate x:Key="PropertiesTemplate" DataType="{x:Type local:PropertiesViewModel}">
+            <views:PropertiesView />
+        </DataTemplate>
+
+        <!--  DataTemplate for Output  -->
+        <DataTemplate x:Key="OutputTemplate" DataType="{x:Type local:OutputViewModel}">
+            <views:OutputView />
+        </DataTemplate>
+
+        <!--  DataTemplate for CodeEditor  -->
+        <DataTemplate x:Key="CodeEditorTemplate" DataType="{x:Type local:CodeEditorViewModel}">
+            <views:CodeEditorView />
+        </DataTemplate>
+
+        <!--  Style for document headers  -->
+
+    </Window.Resources>
+
+    <DockPanel>
+        <!--  Menu Bar  -->
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_File">
+                <MenuItem Command="{Binding NewFileCommand}" Header="_New" />
+                <MenuItem Command="{Binding OpenFileCommand}" Header="_Open" />
+                <MenuItem Command="{Binding SaveFileCommand}" Header="_Save" />
+                <Separator />
+                <MenuItem Command="{Binding ExitCommand}" Header="E_xit" />
+            </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem
+                    Header="Solution Explorer"
+                    IsCheckable="True"
+                    IsChecked="{Binding SolutionExplorer.IsVisible}" />
+                <MenuItem
+                    Header="Properties"
+                    IsCheckable="True"
+                    IsChecked="{Binding Properties.IsVisible}" />
+                <MenuItem
+                    Header="Output"
+                    IsCheckable="True"
+                    IsChecked="{Binding Output.IsVisible}" />
+            </MenuItem>
+            <MenuItem Header="_Layout">
+                <MenuItem Command="{Binding SaveLayoutCommand}" Header="Save Layout" />
+                <MenuItem Command="{Binding LoadLayoutCommand}" Header="Load Layout" />
+                <MenuItem Command="{Binding ResetLayoutCommand}" Header="Reset Layout" />
+            </MenuItem>
+        </Menu>
+
+        <!--  Status Bar  -->
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusText}" />
+            </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right">
+                <TextBlock Text="{Binding ActiveDocument.FilePath}" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <!--  Main Docking Manager  -->
+        <DockingManager
+            x:Name="dockingManager"
+            ActiveContent="{Binding ActiveDocument, Mode=TwoWay}"
+            AnchorablesSource="{Binding Tools}"
+            DocumentsSource="{Binding Documents}"
+            Theme="{Binding CurrentTheme}">
+
+            <DockingManager.LayoutItemTemplateSelector>
+                <local:PaneDataTemplateSelector />
+            </DockingManager.LayoutItemTemplateSelector>
+
+            <DockingManager.LayoutItemContainerStyleSelector>
+                <local:PaneStyleSelector />
+            </DockingManager.LayoutItemContainerStyleSelector>
+
+            <LayoutRoot>
+                <LayoutPanel Orientation="Horizontal">
+
+                    <!--  Left Side Panel  -->
+                    <LayoutAnchorablePane Name="LeftPane" DockWidth="250">
+                        <LayoutAnchorable Title="Solution Explorer" ContentId="SolutionExplorer" />
+                    </LayoutAnchorablePane>
+
+                    <!--  Center Document Panel  -->
+                    <LayoutDocumentPane x:Name="DocumentPane" />
+
+                    <!--  Right Side Panel  -->
+                    <LayoutPanel DockWidth="300" Orientation="Vertical">
+                        <LayoutAnchorablePane Name="PropertiesPane" DockHeight="300">
+                            <LayoutAnchorable Title="Properties" ContentId="Properties" />
+                        </LayoutAnchorablePane>
+
+                        <LayoutAnchorablePane Name="OutputPane">
+                            <LayoutAnchorable Title="Output" ContentId="Output" />
+                        </LayoutAnchorablePane>
+                    </LayoutPanel>
+
+                </LayoutPanel>
+            </LayoutRoot>
+        </DockingManager>
+    </DockPanel>
+</Window>

@@ -6,7 +6,7 @@ using static Messaging.ModelLibrary.Grpc.MessagingService;
 
 namespace Messaging.ModelLibrary.Grpc;
 
-public class GrpcClient : IMessageClient
+public class GrpcClient : MessageClientBase
 {
     #region Fields
 
@@ -15,24 +15,16 @@ public class GrpcClient : IMessageClient
     private AsyncDuplexStreamingCall<GrpcMessage, GrpcMessage>? _streamingCall;
     private Task? _receiveTask;
     private CancellationTokenSource? _cancellationTokenSource;
-    private bool _disposed;
 
     #endregion
 
-    #region Events
 
-    public event EventHandler<MessageEventArgs>? MessageReceived;
-    public event EventHandler<ConnectionEventArgs>? Connected;
-    public event EventHandler<ConnectionEventArgs>? Disconnected;
-    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
-
-    #endregion
 
     #region Properties
 
-    public bool IsConnected => _streamingCall != null && !_disposed;
-    public ConnectionInfo? ConnectionInfo { get; private set; }
-    public TransportType TransportType => TransportType.gRPC;
+    public override bool IsConnected => _streamingCall != null && !_disposed;
+    public override ConnectionInfo? ConnectionInfo { get; protected set; }
+    public override TransportType TransportType => TransportType.gRPC;
 
     #endregion
 
@@ -49,7 +41,7 @@ public class GrpcClient : IMessageClient
     /// </summary>
     /// <param name="configuration">Dictionary containing gRPC connection configuration.</param>
     /// <returns>True if the connection was successful; otherwise, false.</returns>
-    public async Task<bool> ConnectAsync(Dictionary<string, object> configuration)
+    public override async Task<bool> ConnectAsync(Dictionary<string, object> configuration)
     {
         try
         {
@@ -58,17 +50,15 @@ public class GrpcClient : IMessageClient
             var serverAddress = configuration.GetValueOrDefault("ServerAddress") as string;
             if (string.IsNullOrEmpty(serverAddress))
             {
-                ErrorOccurred?.Invoke(this, new ErrorEventArgs("ServerAddress is required for gRPC connection"));
+                OnErrorOccurred(new ErrorEventArgs("ServerAddress is required for gRPC connection"));
                 return false;
             }
 
             var clientName = configuration.GetValueOrDefault("ClientName", Environment.UserName) as string ?? Environment.UserName;
             var maxMessageSize = configuration.GetValueOrDefault("MaxReceiveMessageSize", 4 * 1024 * 1024) as int? ?? 4 * 1024 * 1024;
 
-            // Create HTTP handler with proper configuration
             var httpHandler = new HttpClientHandler();
 
-            // Only disable certificate validation for development
             if (serverAddress.StartsWith("http://") ||
                 configuration.GetValueOrDefault("DisableCertificateValidation", false) as bool? == true)
             {
@@ -81,28 +71,26 @@ public class GrpcClient : IMessageClient
                 HttpHandler = httpHandler,
                 MaxReceiveMessageSize = maxMessageSize,
                 MaxSendMessageSize = maxMessageSize,
-                // Add retry policy
                 ServiceConfig = new ServiceConfig
                 {
                     MethodConfigs =
-                {
-                    new MethodConfig
                     {
-                        Names = { MethodName.Default },
-                        RetryPolicy = new RetryPolicy
+                        new MethodConfig
                         {
-                            MaxAttempts = 3,
-                            InitialBackoff = TimeSpan.FromSeconds(1),
-                            MaxBackoff = TimeSpan.FromSeconds(5),
-                            BackoffMultiplier = 1.5,
-                            RetryableStatusCodes = { StatusCode.Unavailable, StatusCode.DeadlineExceeded }
+                            Names = { MethodName.Default },
+                            RetryPolicy = new RetryPolicy
+                            {
+                                MaxAttempts = 3,
+                                InitialBackoff = TimeSpan.FromSeconds(1),
+                                MaxBackoff = TimeSpan.FromSeconds(5),
+                                BackoffMultiplier = 1.5,
+                                RetryableStatusCodes = { StatusCode.Unavailable, StatusCode.DeadlineExceeded }
+                            }
                         }
                     }
                 }
-                }
             };
 
-            // Add custom credentials if provided
             if (configuration.TryGetValue("Credentials", out var credentials) && credentials is ChannelCredentials channelCredentials)
             {
                 channelOptions.Credentials = channelCredentials;
@@ -112,7 +100,6 @@ public class GrpcClient : IMessageClient
             _client = new MessagingServiceClient(_channel);
             _cancellationTokenSource = new CancellationTokenSource();
 
-            // Test connection first with GetConnectionInfo
             try
             {
                 var connectionResponse = await _client.GetConnectionInfoAsync(new Empty(),
@@ -121,20 +108,19 @@ public class GrpcClient : IMessageClient
 
                 ConnectionInfo = new ConnectionInfo
                 {
-                    Id = connectionResponse.Id,
+                    Id = clientName, // Use client name for easier routing
                     Name = clientName,
                     Address = serverAddress,
                     ConnectedAt = DateTimeOffset.FromUnixTimeSeconds(connectionResponse.ConnectedAt).DateTime,
-                    IsActive = connectionResponse.IsActive,
+                    IsActive = connectionResponse.IsOnline,
                     Properties = connectionResponse.Properties.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value)
                 };
             }
             catch (RpcException ex) when (ex.StatusCode == StatusCode.Unimplemented)
             {
-                // Fallback if server doesn't support GetConnectionInfo
                 ConnectionInfo = new ConnectionInfo
                 {
-                    Id = Guid.NewGuid().ToString(),
+                    Id = clientName,
                     Name = clientName,
                     Address = serverAddress,
                     ConnectedAt = DateTime.UtcNow,
@@ -142,49 +128,69 @@ public class GrpcClient : IMessageClient
                 };
             }
 
-            // Start the streaming call
             _streamingCall = _client.StreamMessages(cancellationToken: _cancellationTokenSource.Token);
 
-            // Send handshake message
             var handshakeMessage = new GrpcMessage
             {
                 Id = Guid.NewGuid().ToString(),
-                Content = "CONNECT",
+                Content = "CLIENT_REGISTER",
                 Sender = clientName,
+                Receiver = "System",
                 Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 Type = GrpcMessageType.Handshake
             };
 
             await _streamingCall.RequestStream.WriteAsync(handshakeMessage);
 
-            // Start receiving messages
             _receiveTask = Task.Run(ReceiveMessagesAsync, _cancellationTokenSource.Token);
 
-            Connected?.Invoke(this, new ConnectionEventArgs(ConnectionInfo));
+            OnConnected(new ConnectionEventArgs(ConnectionInfo));
             return true;
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"gRPC connection failed: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"gRPC connection failed: {ex.Message}", ex));
 
-            // Cleanup on failure
             try
             {
                 await DisconnectAsync();
             }
             catch
             {
-                // Ignore cleanup errors
+                // Ignore errors during disconnection
             }
 
             return false;
         }
     }
 
-    public async Task DisconnectAsync()
+    public override async Task DisconnectAsync()
     {
         try
         {
+            // Send unregister message
+            if (_streamingCall != null && ConnectionInfo != null)
+            {
+                var unregisterMessage = new GrpcMessage
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Content = "CLIENT_UNREGISTER",
+                    Sender = ConnectionInfo.Name,
+                    Receiver = "System",
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    Type = GrpcMessageType.Handshake
+                };
+
+                try
+                {
+                    await _streamingCall.RequestStream.WriteAsync(unregisterMessage);
+                }
+                catch
+                {
+                    /*ignore*/
+                }
+            }
+
             _cancellationTokenSource?.Cancel();
 
             if (_streamingCall != null)
@@ -193,9 +199,9 @@ public class GrpcClient : IMessageClient
                 {
                     await _streamingCall.RequestStream.CompleteAsync();
                 }
-                catch (Exception)
+                catch
                 {
-                    // Ignore completion errors
+                    /*ignore*/
                 }
 
                 _streamingCall.Dispose();
@@ -207,13 +213,11 @@ public class GrpcClient : IMessageClient
                 try
                 {
                     if (await Task.WhenAny(_receiveTask, Task.Delay(2000)) == _receiveTask)
-                    {
                         await _receiveTask;
-                    }
                 }
-                catch (Exception)
+                catch
                 {
-                    // Ignore task completion errors
+                    //* Ignore any exceptions during receive task completion
                 }
                 _receiveTask = null;
             }
@@ -224,7 +228,7 @@ public class GrpcClient : IMessageClient
 
             if (ConnectionInfo != null)
             {
-                Disconnected?.Invoke(this, new ConnectionEventArgs(ConnectionInfo));
+                OnDisconnected(new ConnectionEventArgs(ConnectionInfo));
                 ConnectionInfo = null;
             }
 
@@ -233,16 +237,19 @@ public class GrpcClient : IMessageClient
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"gRPC disconnection error: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"gRPC disconnection error: {ex.Message}", ex));
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message)
+    public override async Task<bool> SendMessageAsync(Message message)
     {
         try
         {
             if (!IsConnected || _streamingCall == null || _disposed)
                 return false;
+
+            if (string.IsNullOrEmpty(message.Sender))
+                message.Sender = ConnectionInfo?.Name ?? "Unknown";
 
             var grpcMessage = new GrpcMessage
             {
@@ -254,10 +261,9 @@ public class GrpcClient : IMessageClient
                 Type = (GrpcMessageType)(int)message.Type
             };
 
-            // Add metadata
             foreach (var kvp in message.Metadata)
             {
-                grpcMessage.Metadata[kvp.Key] = kvp.Value?.ToString() ?? string.Empty;
+                grpcMessage.Metadata[kvp.Key] = kvp.Value.ToString() ?? string.Empty;
             }
 
             await _streamingCall.RequestStream.WriteAsync(grpcMessage);
@@ -265,7 +271,7 @@ public class GrpcClient : IMessageClient
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"gRPC send error: {ex.Message}", ex, ConnectionInfo));
+            OnErrorOccurred(new ErrorEventArgs($"gRPC send error: {ex.Message}", ex, ConnectionInfo));
             return false;
         }
     }
@@ -296,33 +302,27 @@ public class GrpcClient : IMessageClient
 
                     if (ConnectionInfo != null)
                     {
-                        MessageReceived?.Invoke(this, new MessageEventArgs(message, ConnectionInfo));
+                        OnMessageReceived(new MessageEventArgs(message, ConnectionInfo));
                     }
                 }
                 catch (Exception ex)
                 {
-                    ErrorOccurred?.Invoke(this, new ErrorEventArgs($"gRPC message parse error: {ex.Message}", ex, ConnectionInfo));
+                    OnErrorOccurred(new ErrorEventArgs($"gRPC message parse error: {ex.Message}", ex, ConnectionInfo));
                 }
             }
         }
-        catch (OperationCanceledException)
-        {
-            // Expected during shutdown
-        }
-        catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled)
-        {
-            // Expected during shutdown
-        }
+        catch (OperationCanceledException) { }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled) { }
         catch (Exception ex)
         {
             if (!_disposed && _cancellationTokenSource?.Token.IsCancellationRequested != true)
             {
-                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"gRPC receive error: {ex.Message}", ex, ConnectionInfo));
+                OnErrorOccurred(new ErrorEventArgs($"gRPC receive error: {ex.Message}", ex, ConnectionInfo));
             }
         }
     }
 
-    public void Dispose()
+    public override void Dispose()
     {
         if (!_disposed)
         {

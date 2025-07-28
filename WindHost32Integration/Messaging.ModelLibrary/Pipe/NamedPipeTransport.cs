@@ -1,40 +1,24 @@
-﻿using System.Collections.Concurrent;
-using System.IO.Pipes;
+﻿using System.IO.Pipes;
 using System.Text.Json;
 using Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.ModelLibrary.Pipe;
 
-public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : IMessageTransport
+public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : MessageTransportBase
 {
     #region Fields
 
-    private readonly ConcurrentDictionary<string, ClientConnection> _connections = new();
     private CancellationTokenSource? _cancellationTokenSource;
     private Task? _serverTask;
-    private bool _disposed;
-
-    #endregion
-
-    #region Events
-
-    public event EventHandler<MessageEventArgs>? MessageReceived;
-    public event EventHandler<ConnectionEventArgs>? ClientConnected;
-    public event EventHandler<ConnectionEventArgs>? ClientDisconnected;
-    public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
     #endregion
 
     #region Properties
-
-    public bool IsRunning { get; private set; }
-    public TransportType TransportType => TransportType.NamedPipe;
-    public IReadOnlyList<ConnectionInfo> Connections => _connections.Values.Select(c => c.Info).ToList();
-
+    public override bool IsRunning { get; protected set; }
+    public override TransportType TransportType => TransportType.NamedPipe;
     #endregion
 
-    #region Methods
-    public async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
+    public override async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
     {
         try
         {
@@ -48,12 +32,12 @@ public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : IMess
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to start named pipe server: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to start named pipe server: {ex.Message}", ex));
             return false;
         }
     }
 
-    public async Task StopAsync()
+    public override async Task StopAsync()
     {
         try
         {
@@ -64,47 +48,40 @@ public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : IMess
                 try
                 {
                     if (await Task.WhenAny(_serverTask, Task.Delay(3000)) == _serverTask)
-                    {
                         await _serverTask;
-                    }
                 }
-                catch (Exception)
-                {
-                    // Ignore server task exceptions during shutdown
-                }
+                catch { /*ignored*/}
                 _serverTask = null;
             }
 
             // Dispose all connections
-            var connectionTasks = _connections.Values.Select(connection => Task.Run(() => connection.Dispose()));
+            var connectionTasks = _connections.Values.Select(connection =>
+                Task.Run(() => (connection.TransportData as PipeClientConnection)?.Dispose()));
+
             try
             {
                 await Task.WhenAll(connectionTasks);
             }
-            catch (Exception)
-            {
-                // Ignore connection disposal errors
-            }
+            catch { /*ignored*/ }
 
             _connections.Clear();
             IsRunning = false;
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Error stopping server: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Error stopping server: {ex.Message}", ex));
         }
     }
 
-    public async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
+    public override async Task<bool> SendMessageAsync(Message message, string? connectionId = null)
     {
         try
         {
             if (string.IsNullOrEmpty(connectionId))
-            {
                 return await BroadcastMessageAsync(message);
-            }
 
-            if (_connections.TryGetValue(connectionId, out var connection))
+            if (_connections.TryGetValue(connectionId, out var clientInfo) &&
+                clientInfo.TransportData is PipeClientConnection connection)
             {
                 return await connection.SendMessageAsync(message);
             }
@@ -113,24 +90,32 @@ public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : IMess
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to send message: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to send message: {ex.Message}", ex));
             return false;
         }
     }
 
-    public async Task<bool> BroadcastMessageAsync(Message message)
+    public override async Task<bool> BroadcastMessageAsync(Message message)
     {
         try
         {
-            var tasks = _connections.Values.Select(connection => connection.SendMessageAsync(message));
+            var tasks = _connections.Values
+                .Where(c => c.TransportData is PipeClientConnection)
+                .Select(c => ((PipeClientConnection)c.TransportData).SendMessageAsync(message));
+
             var results = await Task.WhenAll(tasks);
             return results.Any(r => r);
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Failed to broadcast message: {ex.Message}", ex));
+            OnErrorOccurred(new ErrorEventArgs($"Failed to broadcast message: {ex.Message}", ex));
             return false;
         }
+    }
+
+    protected override string GetClientAddress(object transportSpecificData)
+    {
+        return pipeName;
     }
 
     private async Task RunServerAsync()
@@ -149,33 +134,20 @@ public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : IMess
 
                 await pipeServer.WaitForConnectionAsync(_cancellationTokenSource.Token);
 
-                var connectionInfo = new ConnectionInfo
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    Name = "Unknown",
-                    Address = pipeName
-                };
-
-                var clientConnection = new ClientConnection(pipeServer, connectionInfo, _cancellationTokenSource.Token);
+                var clientConnection = new PipeClientConnection(pipeServer, pipeName, _cancellationTokenSource.Token);
                 clientConnection.MessageReceived += OnClientMessageReceived;
                 clientConnection.Disconnected += OnClientDisconnected;
                 clientConnection.ErrorOccurred += OnClientErrorOccurred;
-
-                _connections.TryAdd(connectionInfo.Id, clientConnection);
-                ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
 
                 clientConnection.StartReading();
 
                 // Don't dispose the pipe here - let ClientConnection manage it
                 pipeServer = null;
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Server error: {ex.Message}", ex));
+                OnErrorOccurred(new ErrorEventArgs($"Server error: {ex.Message}", ex));
                 pipeServer?.Dispose();
             }
         }
@@ -183,53 +155,38 @@ public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : IMess
 
     private void OnClientMessageReceived(object? sender, MessageEventArgs e)
     {
-        // Update connection name if this is the first message
-        if (sender is ClientConnection { Info.Name: "Unknown" } connection)
+        if (sender is PipeClientConnection)
         {
-            connection.Info.Name = e.Message.Sender;
-        }
+            // Register client if this is a registration message
+            if (e.Message.Type == MessageType.System && e.Message.Content == "CLIENT_REGISTER")
+            {
+                RegisterClient(e.Message.Sender, e.Message.Sender, sender);
+                return;
+            }
 
-        MessageReceived?.Invoke(this, e);
+            HandleReceivedMessage(e.Message, e.Message.Sender);
+        }
     }
 
     private void OnClientDisconnected(object? sender, ConnectionEventArgs e)
     {
-        _connections.TryRemove(e.Connection.Id, out _);
-        ClientDisconnected?.Invoke(this, e);
+        UnregisterClient(e.Connection.Id);
     }
 
     private void OnClientErrorOccurred(object? sender, ErrorEventArgs e)
     {
-        ErrorOccurred?.Invoke(this, e);
+        OnErrorOccurred(e);
     }
 
-    public void Dispose()
-    {
-        if (!_disposed)
-        {
-            _disposed = true;
-
-            try
-            {
-                StopAsync().Wait(3000); // Wait up to 3 seconds
-            }
-            catch (Exception)
-            {
-                // Ignore disposal errors
-            }
-        }
-    }
-
-    #endregion
-
-    #region ClientConnectionHandler
-    private class ClientConnection(NamedPipeServerStream pipe, ConnectionInfo info, CancellationToken cancellationToken)
+    #region Enhanced Client Connection
+    private class PipeClientConnection(
+        NamedPipeServerStream pipe,
+        string pipeName,
+        CancellationToken cancellationToken)
         : IDisposable
     {
         private Task? _readTask;
         private bool _disposed;
-
-        public ConnectionInfo Info { get; } = info;
 
         public event EventHandler<MessageEventArgs>? MessageReceived;
         public event EventHandler<ConnectionEventArgs>? Disconnected;
@@ -253,17 +210,9 @@ public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : IMess
                 await writer.FlushAsync();
                 return true;
             }
-            catch (ObjectDisposedException)
-            {
-                return false;
-            }
-            catch (InvalidOperationException)
-            {
-                return false;
-            }
             catch (Exception ex)
             {
-                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Send error: {ex.Message}", ex, Info));
+                ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Send error: {ex.Message}", ex));
                 return false;
             }
         }
@@ -282,38 +231,44 @@ public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : IMess
                     try
                     {
                         var message = JsonSerializer.Deserialize<Message>(json);
-                        if (message != null) MessageReceived?.Invoke(this, new MessageEventArgs(message, Info));
+                        if (message != null)
+                        {
+                            var connectionInfo = new ConnectionInfo
+                            {
+                                Id = message.Sender,
+                                Name = message.Sender,
+                                Address = pipeName
+                            };
+                            MessageReceived?.Invoke(this, new MessageEventArgs(message, connectionInfo));
+                        }
                     }
                     catch (JsonException ex)
                     {
-                        ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex, Info));
+                        ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Message parse error: {ex.Message}", ex));
                     }
                 }
             }
-            catch (ObjectDisposedException)
-            {
-                // Pipe was disposed - this is expected during shutdown
-            }
-            catch (InvalidOperationException)
-            {
-                // Pipe is closed - this is expected during disconnect
-            }
-            catch (OperationCanceledException)
-            {
-                // Cancellation requested - this is expected during shutdown
-            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
                 if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
-                    ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex, Info));
+                    ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex));
                 }
             }
             finally
             {
                 if (!_disposed)
                 {
-                    Disconnected?.Invoke(this, new ConnectionEventArgs(Info));
+                    var connectionInfo = new ConnectionInfo
+                    {
+                        Id = "Unknown",
+                        Name = "Unknown",
+                        Address = pipeName
+                    };
+                    Disconnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
                 }
             }
         }
@@ -329,22 +284,15 @@ public class NamedPipeTransport(string pipeName = "GenericMessagingApp") : IMess
                     pipe.Close();
                     pipe.Dispose();
                 }
-                catch (Exception)
-                {
-                    // Ignore disposal errors
-                }
+                catch { /*ignored*/ }
 
                 try
                 {
-                    _readTask?.Wait(1000); // Wait up to 1 second for read task to complete
+                    _readTask?.Wait(1000);
                 }
-                catch (Exception)
-                {
-                    // Ignore task wait errors
-                }
+                catch { /*ignored*/ }
             }
         }
     }
-
     #endregion
 }
