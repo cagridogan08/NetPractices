@@ -173,7 +173,7 @@ public class MainViewModel : INotifyPropertyChanged
 
     public string SelectedRecipient
     {
-        get => _selectedRecipient;
+        get => _selectedRecipient ?? "Everyone";
         set
         {
             _selectedRecipient = value;

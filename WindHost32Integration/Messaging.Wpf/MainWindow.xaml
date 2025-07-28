@@ -676,7 +676,7 @@
                         Margin="5,0"
                         IsEnabled="{Binding IsConnected}"
                         ItemsSource="{Binding Recipients}"
-                        SelectedValue="{Binding SelectedRecipient}" />
+                        SelectedValue="{Binding SelectedRecipient, UpdateSourceTrigger=PropertyChanged}" />
 
                     <Label
                         Grid.Column="2"
