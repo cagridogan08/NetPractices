@@ -2,7 +2,6 @@
 using Grpc.Net.Client;
 using Grpc.Net.Client.Configuration;
 using Messaging.ModelLibrary.Abstract;
-using static Messaging.ModelLibrary.Grpc.MessagingService;
 
 namespace Messaging.ModelLibrary.Grpc;
 
@@ -11,7 +10,7 @@ public class GrpcClient : MessageClientBase
     #region Fields
 
     private GrpcChannel? _channel;
-    private MessagingServiceClient? _client;
+    private GrpcMessagingService.GrpcMessagingServiceClient? _client;
     private AsyncDuplexStreamingCall<GrpcMessage, GrpcMessage>? _streamingCall;
     private Task? _receiveTask;
     private CancellationTokenSource? _cancellationTokenSource;
@@ -97,7 +96,7 @@ public class GrpcClient : MessageClientBase
             }
 
             _channel = GrpcChannel.ForAddress(serverAddress, channelOptions);
-            _client = new MessagingServiceClient(_channel);
+            _client = new GrpcMessagingService.GrpcMessagingServiceClient(_channel);
             _cancellationTokenSource = new CancellationTokenSource();
 
             try

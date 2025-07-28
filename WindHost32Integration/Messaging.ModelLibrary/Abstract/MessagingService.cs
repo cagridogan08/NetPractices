@@ -1,7 +1,6 @@
-﻿using Messaging.ModelLibrary.Abstract;
-using Messaging.ModelLibrary.Broker;
+﻿using Messaging.ModelLibrary.Broker;
 
-namespace Messaging.ModelLibrary;
+namespace Messaging.ModelLibrary.Abstract;
 
 public class MessagingService : IMessagingService
 {
@@ -69,7 +68,6 @@ public class MessagingService : IMessagingService
             await StopAsync();
 
             _client = client;
-
             // Subscribe to events
             _client.MessageReceived += OnClientMessageReceived;
             _client.Connected += OnClientConnected;
@@ -249,36 +247,53 @@ public class MessagingService : IMessagingService
         }
     }
 
+    // FIXED: Handle broadcasting correctly for both client and server modes
     public async Task<bool> BroadcastMessageAsync(string content, MessageType type = MessageType.Text)
     {
-        if (Mode != MessagingMode.Server || _transport == null)
-            return false;
-
-        var message = new Message
+        if (Mode == MessagingMode.Server && _transport != null)
         {
-            Content = content,
-            Sender = ClientName,
-            Type = type
-        };
+            // Server mode: use transport to broadcast
+            var message = new Message
+            {
+                Content = content,
+                Sender = ClientName,
+                Type = type
+            };
 
-        return await _transport.BroadcastMessageAsync(message);
+            return await _transport.BroadcastMessageAsync(message);
+        }
+        else if (Mode == MessagingMode.Client && _client != null)
+        {
+            // Client mode: send message with null/empty receiver (broadcast)
+            var message = new Message
+            {
+                Content = content,
+                Sender = ClientName,
+                Receiver = null, // null receiver indicates broadcast
+                Type = type
+            };
+
+            return await _client.SendMessageAsync(message);
+        }
+
+        return false;
     }
 
     #region Event Handlers
-    private void OnTransportMessageReceived(object? sender, MessageEventArgs e) => MessageReceived?.Invoke(this, e);
-    private void OnTransportClientConnected(object? sender, ConnectionEventArgs e) => Connected?.Invoke(this, e);
-    private void OnTransportClientDisconnected(object? sender, ConnectionEventArgs e) => Disconnected?.Invoke(this, e);
-    private void OnTransportErrorOccurred(object? sender, ErrorEventArgs e) => ErrorOccurred?.Invoke(this, e);
+    public void OnTransportMessageReceived(object? sender, MessageEventArgs e) => MessageReceived?.Invoke(this, e);
+    public void OnTransportClientConnected(object? sender, ConnectionEventArgs e) => Connected?.Invoke(this, e);
+    public void OnTransportClientDisconnected(object? sender, ConnectionEventArgs e) => Disconnected?.Invoke(this, e);
+    public void OnTransportErrorOccurred(object? sender, ErrorEventArgs e) => ErrorOccurred?.Invoke(this, e);
 
-    private void OnClientMessageReceived(object? sender, MessageEventArgs e) => MessageReceived?.Invoke(this, e);
-    private void OnClientConnected(object? sender, ConnectionEventArgs e) => Connected?.Invoke(this, e);
-    private void OnClientDisconnected(object? sender, ConnectionEventArgs e) => Disconnected?.Invoke(this, e);
-    private void OnClientErrorOccurred(object? sender, ErrorEventArgs e) => ErrorOccurred?.Invoke(this, e);
+    public void OnClientMessageReceived(object? sender, MessageEventArgs e) => MessageReceived?.Invoke(this, e);
+    public void OnClientConnected(object? sender, ConnectionEventArgs e) => Connected?.Invoke(this, e);
+    public void OnClientDisconnected(object? sender, ConnectionEventArgs e) => Disconnected?.Invoke(this, e);
+    public void OnClientErrorOccurred(object? sender, ErrorEventArgs e) => ErrorOccurred?.Invoke(this, e);
 
-    private void OnBrokerMessageRouted(object? sender, MessageEventArgs e) => MessageReceived?.Invoke(this, e);
-    private void OnBrokerClientDiscovered(object? sender, ClientDiscoveryEventArgs e) { /* Handle as needed */ }
-    private void OnBrokerClientDisconnected(object? sender, ClientDiscoveryEventArgs e) { /* Handle as needed */ }
-    private void OnBrokerErrorOccurred(object? sender, ErrorEventArgs e) => ErrorOccurred?.Invoke(this, e);
+    public void OnBrokerMessageRouted(object? sender, MessageEventArgs e) => MessageReceived?.Invoke(this, e);
+    public void OnBrokerClientDiscovered(object? sender, ClientDiscoveryEventArgs e) { /* Handle as needed */ }
+    public void OnBrokerClientDisconnected(object? sender, ClientDiscoveryEventArgs e) { /* Handle as needed */ }
+    public void OnBrokerErrorOccurred(object? sender, ErrorEventArgs e) => ErrorOccurred?.Invoke(this, e);
     #endregion
 
     public void Dispose()

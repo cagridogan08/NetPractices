@@ -1,5 +1,6 @@
 ﻿using System.IO.Pipes;
 using System.Text;
+using Messaging.ModelLibrary.Abstract;
 
 namespace NamedPipeClient
 {
@@ -17,7 +18,7 @@ namespace NamedPipeClient
             Console.WriteLine("  echo <message> - Echo a message");
             Console.WriteLine("  quit/exit - Disconnect from server");
             Console.WriteLine();
-            var _messagingService = new Messaging.ModelLibrary.MessagingService();
+            var _messagingService = new MessagingService();
             try
             {
                 var client = new Messaging.ModelLibrary.Pipe.NamedPipeClient();

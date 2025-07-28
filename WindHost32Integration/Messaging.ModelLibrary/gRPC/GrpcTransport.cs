@@ -98,7 +98,7 @@ public class GrpcTransport : MessageTransportBase
               app.UseEndpoints(endpoints =>
               {
                   // Map the gRPC service - THIS WAS MISSING!
-                  endpoints.MapGrpcService<GrpcMessagingService>();
+                  endpoints.MapGrpcService<GrpcMessagingServiceImplementation>();
 
                   // Health check endpoint
                   endpoints.MapGet("/health", async context =>
@@ -449,7 +449,7 @@ public class GrpcTransport : MessageTransportBase
 /// <summary>
 /// Enhanced gRPC service implementation
 /// </summary>
-public class GrpcMessagingService(GrpcTransport transport) : MessagingService.MessagingServiceBase
+public class GrpcMessagingServiceImplementation(GrpcTransport transport) : GrpcMessagingService.GrpcMessagingServiceBase
 {
     #region Streaming Methods
     public override async Task StreamMessages(IAsyncStreamReader<GrpcMessage> requestStream,

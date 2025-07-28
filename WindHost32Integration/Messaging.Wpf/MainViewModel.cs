@@ -1,4 +1,5 @@
 ﻿using Messaging.ModelLibrary;
+using Messaging.ModelLibrary.Abstract;
 using Messaging.ModelLibrary.Pipe;
 using Messaging.ModelLibrary.Rtp;
 using Messaging.ModelLibrary.RTP;
@@ -6,16 +7,19 @@ using Messaging.ModelLibrary.SignalR;
 using Messaging.ModelLibrary.Tcp;
 using Messaging.ModelLibrary.Udp;
 using Messaging.ModelLibrary.WebSocket;
+using Messaging.ModelLibrary.Grpc;
 using MessagingApp.WPF.ViewModels;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Input;
-using Messaging.ModelLibrary.Abstract;
-using Messaging.ModelLibrary.Grpc;
-using MessagingService = Messaging.ModelLibrary.MessagingService;
+using Microsoft.Win32;
+using System.IO;
+using System.Windows.Threading;
+using ClientInfo = Messaging.ModelLibrary.ClientInfo;
+using ErrorEventArgs = Messaging.ModelLibrary.ErrorEventArgs;
+using MessagingService = Messaging.ModelLibrary.Abstract;
 
 namespace Messaging.Wpf;
 
@@ -26,46 +30,35 @@ public class MainViewModel : INotifyPropertyChanged
     private string _clientName = Environment.UserName;
     private string _statusText = "Disconnected";
     private bool _isConnected;
+    private string _selectedRecipient = "Everyone";
+    private string _groupName = string.Empty;
+    private bool _requiresAcknowledgment = false;
+    private MessagePriority _selectedPriority = MessagePriority.Normal;
+    private string _searchText = string.Empty;
 
     // Transport type
     private TransportType _selectedTransportType = TransportType.NamedPipe;
 
-    // Named Pipe settings
+    // Transport settings (keeping existing ones)
     private string _pipeName = "GenericMessagingApp";
     private string _serverName = ".";
-
-    // TCP settings
     private string _tcpHost = "localhost";
     private int _tcpPort = 8080;
-
-    // UDP settings
     private string _udpHost = "localhost";
     private int _udpPort = 11000;
     private int _udpLocalPort = 0;
-
-    // WebSocket settings
     private string _webSocketHost = "localhost";
     private int _webSocketPort = 8080;
     private string _webSocketPath = "/";
     private bool _webSocketUseSSL = false;
-
-    // InMemory settings
-    private string _inMemoryServerName = "default";
-
-    // SignalR settings
     private string _signalRHost = "localhost";
     private int _signalRPort = 5003;
     private string _signalRHubPath = "/messagingHub";
     private bool _signalRUseHttps = false;
     private bool _signalREnableAutoReconnect = true;
-
-    // Simple gRPC settings
     private string _grpcHost = "localhost";
     private int _grpcPort = 5002;
     private bool _grpcUseHttps = false;
-    private int _grpcPollingInterval = 1000;
-
-    // RTP settings
     private string _rtpHost = "localhost";
     private int _rtpPort = 5004;
     private int _rtpLocalPort = 0;
@@ -74,18 +67,20 @@ public class MainViewModel : INotifyPropertyChanged
 
     public MainViewModel()
     {
-        _messagingService = new MessagingService();
+        _messagingService = new MessagingService.MessagingService();
         _messagingService.MessageReceived += OnMessageReceived;
         _messagingService.Connected += OnConnected;
         _messagingService.Disconnected += OnDisconnected;
         _messagingService.ErrorOccurred += OnErrorOccurred;
 
-        Messages = new ObservableCollection<Message>();
+        Messages = new ObservableCollection<MessageDisplayItem>();
         Connections = new ObservableCollection<ConnectionInfo>();
+        OnlineClients = new ObservableCollection<ClientInfo>();
+        Groups = new ObservableCollection<string>();
+        FilteredMessages = new ObservableCollection<MessageDisplayItem>();
 
         TransportTypes = new ObservableCollection<TransportType>
         {
-            TransportType.InMemory,
             TransportType.NamedPipe,
             TransportType.Tcp,
             TransportType.Udp,
@@ -95,27 +90,43 @@ public class MainViewModel : INotifyPropertyChanged
             TransportType.Rtp
         };
 
+        MessagePriorities = new ObservableCollection<MessagePriority>
+        {
+            MessagePriority.Low,
+            MessagePriority.Normal,
+            MessagePriority.High,
+            MessagePriority.Critical
+        };
+
+        Recipients = new ObservableCollection<string> { "Everyone" };
+
+        // Commands
         ConnectCommand = new RelayCommand(async () => await ConnectAsync(), () => !IsConnected);
         DisconnectCommand = new RelayCommand(async () => await DisconnectAsync(), () => IsConnected);
         SendMessageCommand = new RelayCommand(async () => await SendMessageAsync(), () => IsConnected && !string.IsNullOrWhiteSpace(MessageText));
         StartServerCommand = new RelayCommand(async () => await StartServerAsync(), () => !IsConnected);
-        ClearMessagesCommand = new RelayCommand(() => Messages.Clear());
+        ClearMessagesCommand = new RelayCommand(() => ClearMessages());
+        RefreshClientsCommand = new RelayCommand(async () => await RefreshOnlineClientsAsync(), () => IsConnected);
+        CreateGroupCommand = new RelayCommand(async () => await CreateGroupAsync(), () => IsConnected && !string.IsNullOrWhiteSpace(GroupName));
+        JoinGroupCommand = new RelayCommand(async () => await JoinGroupAsync(), () => IsConnected && !string.IsNullOrWhiteSpace(GroupName));
+        LeaveGroupCommand = new RelayCommand(async () => await LeaveGroupAsync(), () => IsConnected && !string.IsNullOrWhiteSpace(GroupName));
+        SendFileCommand = new RelayCommand(async () => await SendFileAsync(), () => IsConnected);
+        SearchMessagesCommand = new RelayCommand(() => FilterMessages());
+
+        // Initialize filtered messages
+        FilterMessages();
     }
 
-    public ObservableCollection<Message> Messages { get; }
+    #region Properties
+
+    public ObservableCollection<MessageDisplayItem> Messages { get; }
+    public ObservableCollection<MessageDisplayItem> FilteredMessages { get; }
     public ObservableCollection<ConnectionInfo> Connections { get; }
+    public ObservableCollection<ClientInfo> OnlineClients { get; }
+    public ObservableCollection<string> Groups { get; }
+    public ObservableCollection<string> Recipients { get; }
     public ObservableCollection<TransportType> TransportTypes { get; }
-    private ConnectionInfo? _selectedConnectionInfo;
-
-    public ConnectionInfo? SelectedConnectionInfo
-    {
-        get => _selectedConnectionInfo;
-        set
-        {
-            _selectedConnectionInfo = value;
-            OnPropertyChanged(nameof(SelectedConnectionInfo));
-        }
-    }
+    public ObservableCollection<MessagePriority> MessagePriorities { get; }
 
     public string MessageText
     {
@@ -156,10 +167,61 @@ public class MainViewModel : INotifyPropertyChanged
         {
             _isConnected = value;
             OnPropertyChanged();
-            ((RelayCommand)ConnectCommand).RaiseCanExecuteChanged();
-            ((RelayCommand)DisconnectCommand).RaiseCanExecuteChanged();
-            ((RelayCommand)SendMessageCommand).RaiseCanExecuteChanged();
-            ((RelayCommand)StartServerCommand).RaiseCanExecuteChanged();
+            UpdateCommandStates();
+        }
+    }
+
+    public string SelectedRecipient
+    {
+        get => _selectedRecipient;
+        set
+        {
+            _selectedRecipient = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string GroupName
+    {
+        get => _groupName;
+        set
+        {
+            _groupName = value;
+            OnPropertyChanged();
+            ((RelayCommand)CreateGroupCommand).RaiseCanExecuteChanged();
+            ((RelayCommand)JoinGroupCommand).RaiseCanExecuteChanged();
+            ((RelayCommand)LeaveGroupCommand).RaiseCanExecuteChanged();
+        }
+    }
+
+    public bool RequiresAcknowledgment
+    {
+        get => _requiresAcknowledgment;
+        set
+        {
+            _requiresAcknowledgment = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public MessagePriority SelectedPriority
+    {
+        get => _selectedPriority;
+        set
+        {
+            _selectedPriority = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string SearchText
+    {
+        get => _searchText;
+        set
+        {
+            _searchText = value;
+            OnPropertyChanged();
+            FilterMessages();
         }
     }
 
@@ -170,7 +232,6 @@ public class MainViewModel : INotifyPropertyChanged
         {
             _selectedTransportType = value;
             OnPropertyChanged();
-            OnPropertyChanged(nameof(IsInMemorySelected));
             OnPropertyChanged(nameof(IsNamedPipeSelected));
             OnPropertyChanged(nameof(IsTcpSelected));
             OnPropertyChanged(nameof(IsUdpSelected));
@@ -181,8 +242,7 @@ public class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    // Transport type visibility properties
-    public bool IsInMemorySelected => SelectedTransportType == TransportType.InMemory;
+    // Transport configuration properties (keeping existing ones)
     public bool IsNamedPipeSelected => SelectedTransportType == TransportType.NamedPipe;
     public bool IsTcpSelected => SelectedTransportType == TransportType.Tcp;
     public bool IsUdpSelected => SelectedTransportType == TransportType.Udp;
@@ -191,279 +251,50 @@ public class MainViewModel : INotifyPropertyChanged
     public bool IsGrpcSelected => SelectedTransportType == TransportType.gRPC;
     public bool IsRtpSelected => SelectedTransportType == TransportType.Rtp;
 
-    // Named Pipe Properties
-    public string PipeName
-    {
-        get => _pipeName;
-        set
-        {
-            _pipeName = value;
-            OnPropertyChanged();
-        }
-    }
+    public string PipeName { get => _pipeName; set { _pipeName = value; OnPropertyChanged(); } }
+    public string ServerName { get => _serverName; set { _serverName = value; OnPropertyChanged(); } }
+    public string TcpHost { get => _tcpHost; set { _tcpHost = value; OnPropertyChanged(); } }
+    public int TcpPort { get => _tcpPort; set { _tcpPort = value; OnPropertyChanged(); } }
+    public string UdpHost { get => _udpHost; set { _udpHost = value; OnPropertyChanged(); } }
+    public int UdpPort { get => _udpPort; set { _udpPort = value; OnPropertyChanged(); } }
+    public int UdpLocalPort { get => _udpLocalPort; set { _udpLocalPort = value; OnPropertyChanged(); } }
+    public string WebSocketHost { get => _webSocketHost; set { _webSocketHost = value; OnPropertyChanged(); } }
+    public int WebSocketPort { get => _webSocketPort; set { _webSocketPort = value; OnPropertyChanged(); } }
+    public string WebSocketPath { get => _webSocketPath; set { _webSocketPath = value; OnPropertyChanged(); } }
+    public bool WebSocketUseSSL { get => _webSocketUseSSL; set { _webSocketUseSSL = value; OnPropertyChanged(); } }
+    public string SignalRHost { get => _signalRHost; set { _signalRHost = value; OnPropertyChanged(); } }
+    public int SignalRPort { get => _signalRPort; set { _signalRPort = value; OnPropertyChanged(); } }
+    public string SignalRHubPath { get => _signalRHubPath; set { _signalRHubPath = value; OnPropertyChanged(); } }
+    public bool SignalRUseHttps { get => _signalRUseHttps; set { _signalRUseHttps = value; OnPropertyChanged(); } }
+    public bool SignalREnableAutoReconnect { get => _signalREnableAutoReconnect; set { _signalREnableAutoReconnect = value; OnPropertyChanged(); } }
+    public string GrpcHost { get => _grpcHost; set { _grpcHost = value; OnPropertyChanged(); } }
+    public int GrpcPort { get => _grpcPort; set { _grpcPort = value; OnPropertyChanged(); } }
+    public bool GrpcUseHttps { get => _grpcUseHttps; set { _grpcUseHttps = value; OnPropertyChanged(); } }
+    public string RtpHost { get => _rtpHost; set { _rtpHost = value; OnPropertyChanged(); } }
+    public int RtpPort { get => _rtpPort; set { _rtpPort = value; OnPropertyChanged(); } }
+    public int RtpLocalPort { get => _rtpLocalPort; set { _rtpLocalPort = value; OnPropertyChanged(); } }
+    public bool RtpEnableMulticast { get => _rtpEnableMulticast; set { _rtpEnableMulticast = value; OnPropertyChanged(); } }
+    public string RtpMulticastAddress { get => _rtpMulticastAddress; set { _rtpMulticastAddress = value; OnPropertyChanged(); } }
 
-    public string ServerName
-    {
-        get => _serverName;
-        set
-        {
-            _serverName = value;
-            OnPropertyChanged();
-        }
-    }
+    #endregion
 
-    // TCP Properties
-    public string TcpHost
-    {
-        get => _tcpHost;
-        set
-        {
-            _tcpHost = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public int TcpPort
-    {
-        get => _tcpPort;
-        set
-        {
-            _tcpPort = value;
-            OnPropertyChanged();
-        }
-    }
-
-    // UDP Properties
-    public string UdpHost
-    {
-        get => _udpHost;
-        set
-        {
-            _udpHost = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public int UdpPort
-    {
-        get => _udpPort;
-        set
-        {
-            _udpPort = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public int UdpLocalPort
-    {
-        get => _udpLocalPort;
-        set
-        {
-            _udpLocalPort = value;
-            OnPropertyChanged();
-        }
-    }
-
-    // WebSocket Properties
-    public string WebSocketHost
-    {
-        get => _webSocketHost;
-        set
-        {
-            _webSocketHost = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public int WebSocketPort
-    {
-        get => _webSocketPort;
-        set
-        {
-            _webSocketPort = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public string WebSocketPath
-    {
-        get => _webSocketPath;
-        set
-        {
-            _webSocketPath = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public bool WebSocketUseSSL
-    {
-        get => _webSocketUseSSL;
-        set
-        {
-            _webSocketUseSSL = value;
-            OnPropertyChanged();
-        }
-    }
-
-    // InMemory Properties
-    public string InMemoryServerName
-    {
-        get => _inMemoryServerName;
-        set
-        {
-            _inMemoryServerName = value;
-            OnPropertyChanged();
-        }
-    }
-
-    // SignalR Properties
-    public string SignalRHost
-    {
-        get => _signalRHost;
-        set
-        {
-            _signalRHost = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public int SignalRPort
-    {
-        get => _signalRPort;
-        set
-        {
-            _signalRPort = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public string SignalRHubPath
-    {
-        get => _signalRHubPath;
-        set
-        {
-            _signalRHubPath = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public bool SignalRUseHttps
-    {
-        get => _signalRUseHttps;
-        set
-        {
-            _signalRUseHttps = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public bool SignalREnableAutoReconnect
-    {
-        get => _signalREnableAutoReconnect;
-        set
-        {
-            _signalREnableAutoReconnect = value;
-            OnPropertyChanged();
-        }
-    }
-
-    // Simple gRPC Properties
-    public string GrpcHost
-    {
-        get => _grpcHost;
-        set
-        {
-            _grpcHost = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public int GrpcPort
-    {
-        get => _grpcPort;
-        set
-        {
-            _grpcPort = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public bool GrpcUseHttps
-    {
-        get => _grpcUseHttps;
-        set
-        {
-            _grpcUseHttps = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public int GrpcPollingInterval
-    {
-        get => _grpcPollingInterval;
-        set
-        {
-            _grpcPollingInterval = value;
-            OnPropertyChanged();
-        }
-    }
-
-    // RTP Properties
-    public string RtpHost
-    {
-        get => _rtpHost;
-        set
-        {
-            _rtpHost = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public int RtpPort
-    {
-        get => _rtpPort;
-        set
-        {
-            _rtpPort = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public int RtpLocalPort
-    {
-        get => _rtpLocalPort;
-        set
-        {
-            _rtpLocalPort = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public bool RtpEnableMulticast
-    {
-        get => _rtpEnableMulticast;
-        set
-        {
-            _rtpEnableMulticast = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public string RtpMulticastAddress
-    {
-        get => _rtpMulticastAddress;
-        set
-        {
-            _rtpMulticastAddress = value;
-            OnPropertyChanged();
-        }
-    }
+    #region Commands
 
     public ICommand ConnectCommand { get; }
     public ICommand DisconnectCommand { get; }
     public ICommand SendMessageCommand { get; }
     public ICommand StartServerCommand { get; }
     public ICommand ClearMessagesCommand { get; }
+    public ICommand RefreshClientsCommand { get; }
+    public ICommand CreateGroupCommand { get; }
+    public ICommand JoinGroupCommand { get; }
+    public ICommand LeaveGroupCommand { get; }
+    public ICommand SendFileCommand { get; }
+    public ICommand SearchMessagesCommand { get; }
+
+    #endregion
+
+    #region Connection Methods
 
     private async Task ConnectAsync()
     {
@@ -486,52 +317,53 @@ public class MainViewModel : INotifyPropertyChanged
             var configuration = GetClientConfiguration();
             var success = await _messagingService.ConnectAsClientAsync(client, configuration);
 
-            if (!success)
+            if (success)
+            {
+                // Add debug message
+                AddMessageToDisplay(new Message
+                {
+                    Content = $"✅ Connected as client using {SelectedTransportType}. Mode: {_messagingService.Mode}",
+                    Sender = "System",
+                    Type = MessageType.System,
+                    Timestamp = DateTime.UtcNow
+                });
+
+                // Start periodic refresh of online clients
+                _ = Task.Run(async () =>
+                {
+                    while (IsConnected)
+                    {
+                        await RefreshOnlineClientsAsync();
+                        await Task.Delay(5000); // Refresh every 5 seconds
+                    }
+                });
+            }
+            else
             {
                 IsConnected = false;
                 StatusText = "Connection failed";
+
+                AddMessageToDisplay(new Message
+                {
+                    Content = "❌ Connection failed",
+                    Sender = "System",
+                    Type = MessageType.Error,
+                    Timestamp = DateTime.UtcNow
+                });
             }
-            // If success, the OnConnected event will update the status
         }
         catch (Exception ex)
         {
             IsConnected = false;
             StatusText = $"Connection error: {ex.Message}";
-        }
-    }
 
-    private async Task DisconnectAsync()
-    {
-        StatusText = "Disconnecting...";
-        try
-        {
-            await _messagingService.StopAsync();
-
-            // Force update UI state after disconnect
-            IsConnected = false;
-            StatusText = "Disconnected";
-            Connections.Clear();
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"Disconnect error: {ex.Message}";
-            // Still update the connection state even if there was an error
-            IsConnected = false;
-            Connections.Clear();
-        }
-    }
-
-    private async Task SendMessageAsync()
-    {
-        if (!string.IsNullOrWhiteSpace(MessageText))
-        {
-            if (SelectedConnectionInfo != null)
-                await _messagingService.SendMessageAsync(MessageText, SelectedConnectionInfo.Id);
-            else
+            AddMessageToDisplay(new Message
             {
-                await _messagingService.SendMessageAsync(MessageText);
-            }
-            MessageText = string.Empty;
+                Content = $"❌ Connection error: {ex.Message}",
+                Sender = "System",
+                Type = MessageType.Error,
+                Timestamp = DateTime.UtcNow
+            });
         }
     }
 
@@ -560,40 +392,577 @@ public class MainViewModel : INotifyPropertyChanged
             {
                 IsConnected = true;
                 StatusText = GetServerStatusText();
+
+                AddMessageToDisplay(new Message
+                {
+                    Content = $"🖥️ Server started using {SelectedTransportType}. Mode: {_messagingService.Mode}",
+                    Sender = "System",
+                    Type = MessageType.System,
+                    Timestamp = DateTime.UtcNow
+                });
             }
             else
             {
                 IsConnected = false;
                 StatusText = "Failed to start server";
+
+                AddMessageToDisplay(new Message
+                {
+                    Content = "❌ Failed to start server",
+                    Sender = "System",
+                    Type = MessageType.Error,
+                    Timestamp = DateTime.UtcNow
+                });
             }
         }
         catch (Exception ex)
         {
             IsConnected = false;
             StatusText = $"Server start error: {ex.Message}";
+
+            AddMessageToDisplay(new Message
+            {
+                Content = $"❌ Server start error: {ex.Message}",
+                Sender = "System",
+                Type = MessageType.Error,
+                Timestamp = DateTime.UtcNow
+            });
         }
     }
 
-    private string GetServerStatusText()
+    private async Task DisconnectAsync()
     {
-        return SelectedTransportType switch
+        StatusText = "Disconnecting...";
+        try
         {
-            TransportType.SignalR => $"SignalR server started on {(SignalRUseHttps ? "https" : "http")}://{SignalRHost}:{SignalRPort}{SignalRHubPath}",
-            TransportType.gRPC => $"gRPC server started on {(GrpcUseHttps ? "https" : "http")}://{GrpcHost}:{GrpcPort}",
-            TransportType.Rtp => $"RTP server started on {RtpHost}:{RtpPort}" + (RtpEnableMulticast ? $" (Multicast: {RtpMulticastAddress})" : ""),
-            _ => "Server started, waiting for connections..."
-        };
+            await _messagingService.StopAsync();
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Disconnect error: {ex.Message}";
+            AddMessageToDisplay(new Message
+            {
+                Content = $"⚠️ Disconnect error: {ex.Message}",
+                Sender = "System",
+                Type = MessageType.Error,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        finally
+        {
+            IsConnected = false;
+            StatusText = "Disconnected";
+            Connections.Clear();
+            OnlineClients.Clear();
+            Groups.Clear();
+            Recipients.Clear();
+            Recipients.Add("Everyone");
+
+            AddMessageToDisplay(new Message
+            {
+                Content = "🔌 Disconnected",
+                Sender = "System",
+                Type = MessageType.System,
+                Timestamp = DateTime.UtcNow
+            });
+        }
     }
+
+    #endregion
+
+    #region Messaging Methods
+
+    private async Task SendMessageAsync()
+    {
+        if (string.IsNullOrWhiteSpace(MessageText)) return;
+
+        try
+        {
+            // Add debug information
+            var debugInfo = $"Sending message. Mode: {_messagingService.Mode}, To: {SelectedRecipient}";
+            System.Diagnostics.Debug.WriteLine(debugInfo);
+
+            var message = new Message
+            {
+                Content = MessageText,
+                Sender = ClientName,
+                Type = MessageType.Text,
+                Priority = SelectedPriority,
+                RequiresAcknowledgment = RequiresAcknowledgment,
+                Metadata = new Dictionary<string, object>
+                {
+                    ["ClientVersion"] = "WPF-Enhanced-1.0",
+                    ["SentFrom"] = "WPF Client",
+                    ["Mode"] = _messagingService.Mode.ToString()
+                }
+            };
+
+            bool success;
+            if (SelectedRecipient == "Everyone")
+            {
+                System.Diagnostics.Debug.WriteLine("Sending broadcast message");
+                success = await _messagingService.BroadcastMessageAsync(MessageText, MessageType.Text);
+            }
+            else if (SelectedRecipient.StartsWith("Group: "))
+            {
+                var groupName = SelectedRecipient.Substring(7);
+                System.Diagnostics.Debug.WriteLine($"Sending group message to: {groupName}");
+                success = await _messagingService.SendGroupMessageAsync(groupName, MessageText);
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"Sending direct message to: {SelectedRecipient}");
+                success = await _messagingService.SendDirectMessageAsync(SelectedRecipient, MessageText, MessageType.Text);
+            }
+
+            if (success)
+            {
+                MessageText = string.Empty;
+                AddMessageToDisplay(message, true);
+                System.Diagnostics.Debug.WriteLine("Message sent successfully");
+            }
+            else
+            {
+                StatusText = "Failed to send message";
+                System.Diagnostics.Debug.WriteLine("Message send failed");
+
+                AddMessageToDisplay(new Message
+                {
+                    Content = $"❌ Failed to send message to {SelectedRecipient}",
+                    Sender = "System",
+                    Type = MessageType.Error,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Send error: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"Send error: {ex.Message}");
+
+            AddMessageToDisplay(new Message
+            {
+                Content = $"❌ Send error: {ex.Message}",
+                Sender = "System",
+                Type = MessageType.Error,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+    }
+
+    private async Task SendFileAsync()
+    {
+        try
+        {
+            var openFileDialog = new OpenFileDialog
+            {
+                Title = "Select file to send",
+                Filter = "All files (*.*)|*.*"
+            };
+
+            if (openFileDialog.ShowDialog() == true)
+            {
+                var filePath = openFileDialog.FileName;
+                var fileName = Path.GetFileName(filePath);
+                var fileData = await File.ReadAllBytesAsync(filePath);
+
+                // For file sending, we'll encode as base64 in message content
+                var message = new Message
+                {
+                    Content = Convert.ToBase64String(fileData),
+                    Sender = ClientName,
+                    Receiver = SelectedRecipient == "Everyone" ? null : SelectedRecipient,
+                    Type = MessageType.Text,
+                    Metadata = new Dictionary<string, object>
+                    {
+                        ["IsFile"] = true,
+                        ["FileName"] = fileName,
+                        ["MimeType"] = GetMimeType(fileName),
+                        ["FileSize"] = fileData.Length
+                    }
+                };
+
+                var success = await _messagingService.SendMessageAsync(message);
+                if (success)
+                {
+                    AddMessageToDisplay(new Message
+                    {
+                        Content = $"📎 Sent file: {fileName} ({FormatFileSize(fileData.Length)})",
+                        Sender = ClientName,
+                        Type = MessageType.Text,
+                        Timestamp = DateTime.UtcNow
+                    }, true);
+                }
+                else
+                {
+                    AddMessageToDisplay(new Message
+                    {
+                        Content = $"❌ Failed to send file: {fileName}",
+                        Sender = "System",
+                        Type = MessageType.Error,
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"File send error: {ex.Message}";
+            AddMessageToDisplay(new Message
+            {
+                Content = $"❌ File send error: {ex.Message}",
+                Sender = "System",
+                Type = MessageType.Error,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+    }
+
+    #endregion
+
+    #region Group Management
+
+    private async Task CreateGroupAsync()
+    {
+        if (string.IsNullOrWhiteSpace(GroupName)) return;
+
+        try
+        {
+            var success = await _messagingService.CreateGroupAsync(GroupName);
+            if (success)
+            {
+                Groups.Add(GroupName);
+                Recipients.Add($"Group: {GroupName}");
+                StatusText = $"Group '{GroupName}' created successfully";
+                GroupName = string.Empty;
+
+                AddMessageToDisplay(new Message
+                {
+                    Content = $"👥 Created group: {GroupName}",
+                    Sender = "System",
+                    Type = MessageType.System,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                StatusText = $"Failed to create group '{GroupName}'";
+                AddMessageToDisplay(new Message
+                {
+                    Content = $"❌ Failed to create group: {GroupName}",
+                    Sender = "System",
+                    Type = MessageType.Error,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Group creation error: {ex.Message}";
+            AddMessageToDisplay(new Message
+            {
+                Content = $"❌ Group creation error: {ex.Message}",
+                Sender = "System",
+                Type = MessageType.Error,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+    }
+
+    private async Task JoinGroupAsync()
+    {
+        if (string.IsNullOrWhiteSpace(GroupName)) return;
+
+        try
+        {
+            var success = await _messagingService.JoinGroupAsync(GroupName);
+            if (success)
+            {
+                if (!Groups.Contains(GroupName))
+                    Groups.Add(GroupName);
+                if (!Recipients.Contains($"Group: {GroupName}"))
+                    Recipients.Add($"Group: {GroupName}");
+                StatusText = $"Joined group '{GroupName}' successfully";
+                GroupName = string.Empty;
+
+                AddMessageToDisplay(new Message
+                {
+                    Content = $"📥 Joined group: {GroupName}",
+                    Sender = "System",
+                    Type = MessageType.System,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                StatusText = $"Failed to join group '{GroupName}'";
+                AddMessageToDisplay(new Message
+                {
+                    Content = $"❌ Failed to join group: {GroupName}",
+                    Sender = "System",
+                    Type = MessageType.Error,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Group join error: {ex.Message}";
+            AddMessageToDisplay(new Message
+            {
+                Content = $"❌ Group join error: {ex.Message}",
+                Sender = "System",
+                Type = MessageType.Error,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+    }
+
+    private async Task LeaveGroupAsync()
+    {
+        if (string.IsNullOrWhiteSpace(GroupName)) return;
+
+        try
+        {
+            var success = await _messagingService.LeaveGroupAsync(GroupName);
+            if (success)
+            {
+                Groups.Remove(GroupName);
+                Recipients.Remove($"Group: {GroupName}");
+                StatusText = $"Left group '{GroupName}' successfully";
+                GroupName = string.Empty;
+
+                AddMessageToDisplay(new Message
+                {
+                    Content = $"📤 Left group: {GroupName}",
+                    Sender = "System",
+                    Type = MessageType.System,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                StatusText = $"Failed to leave group '{GroupName}'";
+                AddMessageToDisplay(new Message
+                {
+                    Content = $"❌ Failed to leave group: {GroupName}",
+                    Sender = "System",
+                    Type = MessageType.Error,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Group leave error: {ex.Message}";
+            AddMessageToDisplay(new Message
+            {
+                Content = $"❌ Group leave error: {ex.Message}",
+                Sender = "System",
+                Type = MessageType.Error,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+    }
+
+    #endregion
+
+    #region Client Discovery
+
+    private async Task RefreshOnlineClientsAsync()
+    {
+        try
+        {
+            var clients = await _messagingService.GetOnlineClientsAsync();
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                OnlineClients.Clear();
+                Recipients.Clear();
+                Recipients.Add("Everyone");
+
+                foreach (var client in clients.Where(c => c.Name != ClientName))
+                {
+                    OnlineClients.Add(client);
+                    if (!Recipients.Contains(client.Name))
+                        Recipients.Add(client.Name);
+                }
+
+                // Re-add groups
+                foreach (var group in Groups)
+                {
+                    if (!Recipients.Contains($"Group: {group}"))
+                        Recipients.Add($"Group: {group}");
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            // Silently handle refresh errors to avoid spamming the UI
+            System.Diagnostics.Debug.WriteLine($"Client refresh error: {ex.Message}");
+        }
+    }
+
+    #endregion
+
+    #region Message Display
+
+    private void AddMessageToDisplay(Message message, bool isSent = false)
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            var displayItem = new MessageDisplayItem
+            {
+                Message = message,
+                IsSent = isSent,
+                IsFile = message.Metadata.ContainsKey("IsFile") && (bool)message.Metadata["IsFile"],
+                FormattedContent = FormatMessageContent(message)
+            };
+
+            Messages.Add(displayItem);
+            FilterMessages();
+        });
+    }
+
+    private string FormatMessageContent(Message message)
+    {
+        if (message.Metadata.ContainsKey("IsFile") && (bool)message.Metadata["IsFile"])
+        {
+            var fileName = message.Metadata.GetValueOrDefault("FileName", "Unknown file").ToString();
+            var fileSize = message.Metadata.ContainsKey("FileSize")
+                ? FormatFileSize((int)message.Metadata["FileSize"])
+                : "Unknown size";
+            return $"📎 File: {fileName} ({fileSize})";
+        }
+
+        return message.Content;
+    }
+
+    private void FilterMessages()
+    {
+        FilteredMessages.Clear();
+
+        var filtered = Messages.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            filtered = filtered.Where(m =>
+                m.Message.Content.Contains(SearchText, StringComparison.OrdinalIgnoreCase) ||
+                m.Message.Sender.Contains(SearchText, StringComparison.OrdinalIgnoreCase));
+        }
+
+        foreach (var item in filtered.TakeLast(1000)) // Limit to last 1000 messages
+        {
+            FilteredMessages.Add(item);
+        }
+    }
+
+    private void ClearMessages()
+    {
+        Messages.Clear();
+        FilteredMessages.Clear();
+    }
+
+    #endregion
+
+    #region Event Handlers
+
+    private void OnMessageReceived(object sender, MessageEventArgs e)
+    {
+        // Handle file messages
+        if (e.Message.Metadata.ContainsKey("IsFile") && (bool)e.Message.Metadata["IsFile"])
+        {
+            HandleFileMessage(e.Message);
+        }
+        else
+        {
+            AddMessageToDisplay(e.Message);
+        }
+    }
+
+    private void HandleFileMessage(Message message)
+    {
+        try
+        {
+            var fileName = message.Metadata.GetValueOrDefault("FileName", "Unknown file").ToString();
+            var fileSize = message.Metadata.ContainsKey("FileSize")
+                ? (int)message.Metadata["FileSize"]
+                : 0;
+
+            // Create a display message for the file
+            var displayMessage = new Message
+            {
+                Content = $"📎 Received file: {fileName} ({FormatFileSize(fileSize)}) - Click to save",
+                Sender = message.Sender,
+                Type = MessageType.Text,
+                Timestamp = message.Timestamp,
+                Metadata = message.Metadata
+            };
+
+            AddMessageToDisplay(displayMessage);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"File receive error: {ex.Message}";
+        }
+    }
+
+    private void OnConnected(object sender, ConnectionEventArgs e)
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            IsConnected = true;
+            StatusText = GetConnectedStatusText();
+            if (e.Connection != null && !Connections.Contains(e.Connection))
+            {
+                Connections.Add(e.Connection);
+            }
+        });
+    }
+
+    private void OnDisconnected(object sender, ConnectionEventArgs e)
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (e.Connection != null && Connections.Contains(e.Connection))
+            {
+                Connections.Remove(e.Connection);
+            }
+
+            if (_messagingService.Mode == MessagingMode.None || Connections.Count == 0)
+            {
+                IsConnected = false;
+                StatusText = "Disconnected";
+                OnlineClients.Clear();
+                Groups.Clear();
+                Recipients.Clear();
+                Recipients.Add("Everyone");
+            }
+        });
+    }
+
+    private void OnErrorOccurred(object sender, ErrorEventArgs e)
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            AddMessageToDisplay(new Message
+            {
+                Content = $"ERROR: {e.Error}",
+                Sender = "System",
+                Type = MessageType.Error,
+                Timestamp = DateTime.UtcNow
+            });
+        });
+    }
+
+    #endregion
+
+    #region Helper Methods
 
     private Dictionary<string, object> GetClientConfiguration()
     {
         return SelectedTransportType switch
         {
-            TransportType.InMemory => new Dictionary<string, object>
-            {
-                ["ServerName"] = InMemoryServerName,
-                ["ClientName"] = ClientName
-            },
             TransportType.NamedPipe => new Dictionary<string, object>
             {
                 ["ServerName"] = ServerName,
@@ -635,7 +1004,8 @@ public class MainViewModel : INotifyPropertyChanged
             {
                 ["ServerAddress"] = $"{(GrpcUseHttps ? "https" : "http")}://{GrpcHost}:{GrpcPort}",
                 ["ClientName"] = ClientName,
-                ["PollingInterval"] = GrpcPollingInterval
+                ["MaxReceiveMessageSize"] = 4 * 1024 * 1024,
+                ["DisableCertificateValidation"] = !GrpcUseHttps
             },
             TransportType.Rtp => new Dictionary<string, object>
             {
@@ -652,10 +1022,6 @@ public class MainViewModel : INotifyPropertyChanged
     {
         return SelectedTransportType switch
         {
-            TransportType.InMemory => new Dictionary<string, object>
-            {
-                ["ServerName"] = InMemoryServerName
-            },
             TransportType.NamedPipe => new Dictionary<string, object>
             {
                 ["PipeName"] = PipeName
@@ -703,92 +1069,68 @@ public class MainViewModel : INotifyPropertyChanged
         };
     }
 
-    private void OnMessageReceived(object sender, MessageEventArgs e)
+    private string GetConnectedStatusText()
     {
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            Messages.Add(e.Message);
-        });
+        return _messagingService.Mode == MessagingMode.Server
+            ? GetServerStatusText() + $" - {Connections.Count} client(s)"
+            : $"Connected as client - {OnlineClients.Count} other client(s) online";
     }
 
-    private void OnConnected(object sender, ConnectionEventArgs e)
-    {
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            IsConnected = true;
-
-            // Update status based on mode
-            if (_messagingService.Mode == MessagingMode.Server)
-            {
-                StatusText = Connections.Count == 0 ? GetServerStatusText() + " - First client connected" : GetServerStatusText() + " - Client connected";
-            }
-            else if (_messagingService.Mode == MessagingMode.Client)
-            {
-                StatusText = GetConnectedClientStatusText();
-            }
-            else
-            {
-                StatusText = "Connected";
-            }
-
-            // Add connection if not already present
-            if (e.Connection != null && !Connections.Contains(e.Connection))
-            {
-                Connections.Add(e.Connection);
-            }
-
-        });
-    }
-
-    private string GetConnectedClientStatusText()
+    private string GetServerStatusText()
     {
         return SelectedTransportType switch
         {
-            TransportType.SignalR => $"Connected to SignalR server (Transport: WebSockets)",
-            TransportType.gRPC => $"Connected to gRPC server",
-            TransportType.Rtp => $"Connected to RTP server (SSRC: {_messagingService.Connections.FirstOrDefault()?.Id})",
-            _ => "Connected to server"
+            TransportType.SignalR => $"SignalR server on {(SignalRUseHttps ? "https" : "http")}://{SignalRHost}:{SignalRPort}{SignalRHubPath}",
+            TransportType.gRPC => $"gRPC server on {(GrpcUseHttps ? "https" : "http")}://{GrpcHost}:{GrpcPort}",
+            TransportType.Rtp => $"RTP server on {RtpHost}:{RtpPort}" + (RtpEnableMulticast ? $" (MC: {RtpMulticastAddress})" : ""),
+            _ => $"Server running on {SelectedTransportType}"
         };
     }
 
-    private void OnDisconnected(object sender, ConnectionEventArgs e)
+    private void UpdateCommandStates()
     {
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            // Remove the specific connection
-            if (e.Connection != null && Connections.Contains(e.Connection))
-            {
-                Connections.Remove(e.Connection);
-            }
-
-            // Update overall connection state
-            if (_messagingService.Mode == MessagingMode.None || Connections.Count == 0)
-            {
-                IsConnected = false;
-                if (StatusText == "Disconnecting...")
-                {
-                    StatusText = "Disconnected";
-                }
-                else if (_messagingService.Mode == MessagingMode.None)
-                {
-                    StatusText = "Disconnected";
-                }
-            }
-        });
+        ((RelayCommand)ConnectCommand).RaiseCanExecuteChanged();
+        ((RelayCommand)DisconnectCommand).RaiseCanExecuteChanged();
+        ((RelayCommand)SendMessageCommand).RaiseCanExecuteChanged();
+        ((RelayCommand)StartServerCommand).RaiseCanExecuteChanged();
+        ((RelayCommand)RefreshClientsCommand).RaiseCanExecuteChanged();
+        ((RelayCommand)CreateGroupCommand).RaiseCanExecuteChanged();
+        ((RelayCommand)JoinGroupCommand).RaiseCanExecuteChanged();
+        ((RelayCommand)LeaveGroupCommand).RaiseCanExecuteChanged();
+        ((RelayCommand)SendFileCommand).RaiseCanExecuteChanged();
     }
 
-    private void OnErrorOccurred(object sender, ErrorEventArgs e)
+    private string GetMimeType(string fileName)
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        return extension switch
         {
-            Messages.Add(new Message
-            {
-                Content = $"ERROR: {e.Error}",
-                Sender = "System",
-                Type = MessageType.Error
-            });
-        });
+            ".txt" => "text/plain",
+            ".pdf" => "application/pdf",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".gif" => "image/gif",
+            ".zip" => "application/zip",
+            ".doc" => "application/msword",
+            ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            _ => "application/octet-stream"
+        };
     }
+
+    private string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len = len / 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+
+    #endregion
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -796,4 +1138,13 @@ public class MainViewModel : INotifyPropertyChanged
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
+}
+
+// Helper class for message display
+public class MessageDisplayItem
+{
+    public Message Message { get; set; } = new();
+    public bool IsSent { get; set; }
+    public bool IsFile { get; set; }
+    public string FormattedContent { get; set; } = string.Empty;
 }

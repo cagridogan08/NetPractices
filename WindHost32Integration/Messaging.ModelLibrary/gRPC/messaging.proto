@@ -4,7 +4,7 @@ option csharp_namespace = "Messaging.ModelLibrary.Grpc";
 package messaging;
 
 // The messaging service definition
-service MessagingService {
+service GrpcMessagingService {
   // Bidirectional streaming for real-time messaging
   rpc StreamMessages(stream GrpcMessage) returns (stream GrpcMessage);
   

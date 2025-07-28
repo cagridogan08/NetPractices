@@ -15,7 +15,7 @@ namespace NamedPipeServer
         private static IMessagingService _messagingService;
         static async Task Main(string[] args)
         {
-            _messagingService = new Messaging.ModelLibrary.MessagingService();
+            _messagingService = new MessagingService();
             var server = new NamedPipeTransport(PipeName);
             var configuration = new Dictionary<string, object>
             {
