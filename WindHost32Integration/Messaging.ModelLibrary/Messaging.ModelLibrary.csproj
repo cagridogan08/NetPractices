@@ -16,6 +16,8 @@
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
 		</PackageReference>
 		<PackageReference Include="Google.Protobuf" Version="3.25.0" />
+		<PackageReference Include="MQTTnet" Version="4.3.1.873" />
+		<PackageReference Include="MQTTnet.Extensions.ManagedClient" Version="4.3.1.873" />
 	</ItemGroup>
 	<ItemGroup>
 		<!-- Proto file for code generation -->

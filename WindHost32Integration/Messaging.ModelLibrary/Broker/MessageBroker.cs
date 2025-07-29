@@ -22,10 +22,12 @@ public class MessageBroker : IMessageRouter, IClientDiscovery, IGroupManager, ID
     #endregion
 
     #region Events
+
     public event EventHandler<ClientDiscoveryEventArgs>? ClientDiscovered;
     public event EventHandler<ClientDiscoveryEventArgs>? ClientDisconnected;
     public event EventHandler<MessageEventArgs>? MessageRouted;
     public event EventHandler<ErrorEventArgs>? ErrorOccurred;
+
     #endregion
 
     #region Constructor

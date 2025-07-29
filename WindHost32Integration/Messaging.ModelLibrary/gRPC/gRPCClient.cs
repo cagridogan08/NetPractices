@@ -1,4 +1,5 @@
-﻿using Grpc.Core;
+﻿using System.Net.Security;
+using Grpc.Core;
 using Grpc.Net.Client;
 using Grpc.Net.Client.Configuration;
 using Messaging.ModelLibrary.Abstract;
@@ -56,13 +57,18 @@ public class GrpcClient : MessageClientBase
             var clientName = configuration.GetValueOrDefault("ClientName", Environment.UserName) as string ?? Environment.UserName;
             var maxMessageSize = configuration.GetValueOrDefault("MaxReceiveMessageSize", 4 * 1024 * 1024) as int? ?? 4 * 1024 * 1024;
 
-            var httpHandler = new HttpClientHandler();
+            var httpHandler = new SocketsHttpHandler
+            {
+                EnableMultipleHttp2Connections = true
+            };
 
             if (serverAddress.StartsWith("http://") ||
                 configuration.GetValueOrDefault("DisableCertificateValidation", false) as bool? == true)
             {
-                httpHandler.ServerCertificateCustomValidationCallback =
-                    HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+                httpHandler.SslOptions = new SslClientAuthenticationOptions
+                {
+                    RemoteCertificateValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
+                };
             }
 
             var channelOptions = new GrpcChannelOptions

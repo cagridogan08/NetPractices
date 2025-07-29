@@ -10,5 +10,6 @@ public enum TransportType
     InMemory,
     gRPC,
     RabbitMQ,
-    Rtp
+    Rtp,
+    Mqtt,
 }

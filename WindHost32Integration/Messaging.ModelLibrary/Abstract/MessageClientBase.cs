@@ -1,5 +1,5 @@
-﻿
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace Messaging.ModelLibrary.Abstract;
 
@@ -9,12 +9,14 @@ namespace Messaging.ModelLibrary.Abstract;
 public abstract class MessageClientBase : IMessageClient
 {
     #region Fields
+
     protected IClientDiscovery? _clientDiscovery;
     protected IMessageStore? _messageStore;
     protected IGroupManager? _groupManager;
     protected readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> _pendingAcknowledgments = new();
     protected readonly ConcurrentDictionary<string, ClientInfo> _knownClients = new();
-    protected readonly Timer _heartbeatTimer;
+    protected readonly Timer? _heartbeatTimer;
+    protected readonly Timer? _clientListRefreshTimer;
     protected volatile bool _disposed;
 
     #endregion
@@ -40,6 +42,7 @@ public abstract class MessageClientBase : IMessageClient
     protected MessageClientBase()
     {
         _heartbeatTimer = new Timer(SendHeartbeat, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+        _clientListRefreshTimer = new Timer(RefreshClientListPeriodically, null, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(2));
     }
     #endregion
 
@@ -146,12 +149,16 @@ public abstract class MessageClientBase : IMessageClient
     }
     #endregion
 
-    #region Client Discovery
+    #region Enhanced Client Discovery
     public virtual async Task<IReadOnlyList<ClientInfo>> GetOnlineClientsAsync()
     {
         if (_clientDiscovery != null)
             return await _clientDiscovery.GetOnlineClientsAsync();
 
+        // Request fresh client list from server
+        await RefreshClientListAsync();
+
+        // Return current known clients
         return _knownClients.Values.Where(c => c.IsOnline).ToList();
     }
 
@@ -189,6 +196,14 @@ public abstract class MessageClientBase : IMessageClient
         catch (Exception ex)
         {
             OnErrorOccurred(new ErrorEventArgs($"Failed to refresh client list: {ex.Message}", ex));
+        }
+    }
+
+    private void RefreshClientListPeriodically(object? state)
+    {
+        if (IsConnected && !_disposed)
+        {
+            _ = Task.Run(RefreshClientListAsync);
         }
     }
     #endregion
@@ -256,7 +271,7 @@ public abstract class MessageClientBase : IMessageClient
     }
     #endregion
 
-    #region Event Handlers
+    #region Enhanced Event Handlers
     protected virtual void OnMessageReceived(MessageEventArgs e)
     {
         try
@@ -281,22 +296,7 @@ public abstract class MessageClientBase : IMessageClient
             // Update known clients
             if (!string.IsNullOrEmpty(e.Message.Sender) && e.Message.Sender != "System")
             {
-                var senderClient = new ClientInfo
-                {
-                    Id = e.Message.Sender,
-                    Name = e.Message.Sender,
-                    DisplayName = e.Message.Sender,
-                    LastSeen = DateTime.UtcNow,
-                    IsOnline = true,
-                    TransportType = TransportType
-                };
-
-                _knownClients.AddOrUpdate(e.Message.Sender, senderClient, (key, existing) =>
-                {
-                    existing.LastSeen = DateTime.UtcNow;
-                    existing.IsOnline = true;
-                    return existing;
-                });
+                UpdateKnownClient(e.Message.Sender, isOnline: true);
             }
 
             MessageReceived?.Invoke(this, e);
@@ -307,49 +307,50 @@ public abstract class MessageClientBase : IMessageClient
         }
     }
 
-    protected virtual void OnConnected(ConnectionEventArgs e) => Connected?.Invoke(this, e);
-    protected virtual void OnDisconnected(ConnectionEventArgs e) => Disconnected?.Invoke(this, e);
+    protected virtual void OnConnected(ConnectionEventArgs e)
+    {
+        Connected?.Invoke(this, e);
+
+        // Request initial client list when connected
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(1000); // Give server time to register us
+            await RefreshClientListAsync();
+        });
+    }
+
+    protected virtual void OnDisconnected(ConnectionEventArgs e)
+    {
+        Disconnected?.Invoke(this, e);
+
+        // Mark all known clients as offline
+        foreach (var client in _knownClients.Values)
+        {
+            client.IsOnline = false;
+        }
+    }
+
     protected virtual void OnErrorOccurred(ErrorEventArgs e) => ErrorOccurred?.Invoke(this, e);
     protected virtual void OnClientDiscovered(ClientDiscoveryEventArgs e) => ClientDiscovered?.Invoke(this, e);
     protected virtual void OnClientDisconnected(ClientDiscoveryEventArgs e) => ClientDisconnected?.Invoke(this, e);
     #endregion
 
-    #region Helper Methods
+    #region Enhanced System Message Handling
     private void HandleSystemMessage(Message message)
     {
         try
         {
             if (message.Content.StartsWith("CLIENT_LIST:"))
             {
-                // Handle client list response
-                var clientsJson = message.Content.Substring("CLIENT_LIST:".Length);
-                // Parse and update known clients
-                // Implementation depends on your JSON library
+                HandleClientListResponse(message.Content);
             }
             else if (message.Content.StartsWith("CLIENT_JOINED:"))
             {
-                var clientName = message.Content.Substring("CLIENT_JOINED:".Length);
-                var clientInfo = new ClientInfo
-                {
-                    Id = clientName,
-                    Name = clientName,
-                    DisplayName = clientName,
-                    IsOnline = true,
-                    LastSeen = DateTime.UtcNow,
-                    TransportType = TransportType
-                };
-
-                _knownClients[clientName] = clientInfo;
-                OnClientDiscovered(new ClientDiscoveryEventArgs(clientInfo, true));
+                HandleClientJoined(message.Content);
             }
             else if (message.Content.StartsWith("CLIENT_LEFT:"))
             {
-                var clientName = message.Content.Substring("CLIENT_LEFT:".Length);
-                if (_knownClients.TryGetValue(clientName, out var client))
-                {
-                    client.IsOnline = false;
-                    OnClientDisconnected(new ClientDiscoveryEventArgs(client, false));
-                }
+                HandleClientLeft(message.Content);
             }
         }
         catch (Exception ex)
@@ -358,6 +359,140 @@ public abstract class MessageClientBase : IMessageClient
         }
     }
 
+    private void HandleClientListResponse(string content)
+    {
+        try
+        {
+            var clientsJson = content.Substring("CLIENT_LIST:".Length);
+            if (string.IsNullOrWhiteSpace(clientsJson)) return;
+
+            var clientList = JsonSerializer.Deserialize<List<JsonElement>>(clientsJson);
+            if (clientList == null) return;
+
+            // Mark all current clients as offline first
+            foreach (var client in _knownClients.Values)
+            {
+                client.IsOnline = false;
+            }
+
+            // Update with fresh list
+            foreach (var clientElement in clientList)
+            {
+                try
+                {
+                    var id = clientElement.GetProperty("Id").GetString();
+                    var name = clientElement.GetProperty("Name").GetString();
+                    var address = clientElement.GetProperty("Address").GetString();
+                    var connectedAtStr = clientElement.GetProperty("ConnectedAt").GetString();
+                    var transportTypeStr = clientElement.GetProperty("TransportType").GetString();
+
+                    if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name)) continue;
+
+                    var clientInfo = new ClientInfo
+                    {
+                        Id = id,
+                        Name = name,
+                        DisplayName = name,
+                        IsOnline = true,
+                        LastSeen = DateTime.UtcNow,
+                        Address = address ?? "Unknown",
+                        TransportType = Enum.TryParse<TransportType>(transportTypeStr, out var transport) ? transport : TransportType
+                    };
+
+                    if (DateTime.TryParse(connectedAtStr, out var connectedAt))
+                    {
+                        clientInfo.Properties["ConnectedAt"] = connectedAt;
+                    }
+
+                    var isNewClient = !_knownClients.ContainsKey(id);
+                    _knownClients[id] = clientInfo;
+
+                    if (isNewClient)
+                    {
+                        OnClientDiscovered(new ClientDiscoveryEventArgs(clientInfo, true));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    OnErrorOccurred(new ErrorEventArgs($"Error parsing client info: {ex.Message}", ex));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            OnErrorOccurred(new ErrorEventArgs($"Error parsing client list response: {ex.Message}", ex));
+        }
+    }
+
+    private void HandleClientJoined(string content)
+    {
+        try
+        {
+            var clientName = content.Substring("CLIENT_JOINED:".Length);
+            if (string.IsNullOrWhiteSpace(clientName)) return;
+
+            var clientInfo = new ClientInfo
+            {
+                Id = clientName,
+                Name = clientName,
+                DisplayName = clientName,
+                IsOnline = true,
+                LastSeen = DateTime.UtcNow,
+                TransportType = TransportType
+            };
+
+            _knownClients[clientName] = clientInfo;
+            OnClientDiscovered(new ClientDiscoveryEventArgs(clientInfo, true));
+        }
+        catch (Exception ex)
+        {
+            OnErrorOccurred(new ErrorEventArgs($"Error handling client joined: {ex.Message}", ex));
+        }
+    }
+
+    private void HandleClientLeft(string content)
+    {
+        try
+        {
+            var clientName = content.Substring("CLIENT_LEFT:".Length);
+            if (string.IsNullOrWhiteSpace(clientName)) return;
+
+            if (_knownClients.TryGetValue(clientName, out var client))
+            {
+                client.IsOnline = false;
+                OnClientDisconnected(new ClientDiscoveryEventArgs(client, false));
+            }
+        }
+        catch (Exception ex)
+        {
+            OnErrorOccurred(new ErrorEventArgs($"Error handling client left: {ex.Message}", ex));
+        }
+    }
+
+    private void UpdateKnownClient(string clientName, bool isOnline)
+    {
+        if (clientName == ConnectionInfo?.Name) return; // Don't track ourselves
+
+        _knownClients.AddOrUpdate(clientName,
+            new ClientInfo
+            {
+                Id = clientName,
+                Name = clientName,
+                DisplayName = clientName,
+                IsOnline = isOnline,
+                LastSeen = DateTime.UtcNow,
+                TransportType = TransportType
+            },
+            (_, existing) =>
+            {
+                existing.LastSeen = DateTime.UtcNow;
+                existing.IsOnline = isOnline;
+                return existing;
+            });
+    }
+    #endregion
+
+    #region Helper Methods
     private void SendHeartbeat(object? state)
     {
         if (!IsConnected || _disposed) return;
@@ -388,6 +523,7 @@ public abstract class MessageClientBase : IMessageClient
         {
             _disposed = true;
             _heartbeatTimer?.Dispose();
+            _clientListRefreshTimer?.Dispose();
 
             // Complete all pending acknowledgments
             foreach (var tcs in _pendingAcknowledgments.Values)
@@ -395,6 +531,7 @@ public abstract class MessageClientBase : IMessageClient
                 tcs.TrySetResult(false);
             }
             _pendingAcknowledgments.Clear();
+            _knownClients.Clear();
         }
     }
     #endregion

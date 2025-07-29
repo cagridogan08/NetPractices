@@ -1,5 +1,5 @@
 ﻿using System.Collections.Concurrent;
-
+using System.Text.Json;
 
 namespace Messaging.ModelLibrary.Abstract
 {
@@ -8,17 +8,19 @@ namespace Messaging.ModelLibrary.Abstract
         #region Fields
 
         protected readonly ConcurrentDictionary<string, ClientConnectionInfo> _connections = new();
-        protected readonly Timer _clientTimeoutTimer;
+        protected readonly Timer? _clientTimeoutTimer;
         protected volatile bool _disposed;
         protected readonly object _lockObject = new();
 
         #endregion
 
         #region Events
+
         public event EventHandler<MessageEventArgs>? MessageReceived;
         public event EventHandler<ConnectionEventArgs>? ClientConnected;
         public event EventHandler<ConnectionEventArgs>? ClientDisconnected;
         public event EventHandler<ErrorEventArgs>? ErrorOccurred;
+
         #endregion
 
         #region Properties
@@ -43,8 +45,8 @@ namespace Messaging.ModelLibrary.Abstract
         public abstract Task<bool> BroadcastMessageAsync(Message message);
         #endregion
 
-        #region Client Management
-        protected virtual void RegisterClient(string clientId, string clientName, object transportSpecificData = null)
+        #region Enhanced Client Management
+        protected virtual void RegisterClient(string clientId, string clientName, object? transportSpecificData = null)
         {
             lock (_lockObject)
             {
@@ -64,14 +66,21 @@ namespace Messaging.ModelLibrary.Abstract
                     TransportData = transportSpecificData
                 };
 
-                _connections.AddOrUpdate(clientId, clientConnectionInfo, (key, existing) =>
+                var isNewClient = !_connections.ContainsKey(clientId);
+                _connections.AddOrUpdate(clientId, clientConnectionInfo, (_, existing) =>
                 {
                     existing.LastActivity = DateTime.UtcNow;
                     existing.ConnectionInfo.IsActive = true;
                     return existing;
                 });
 
-                ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
+                if (isNewClient)
+                {
+                    ClientConnected?.Invoke(this, new ConnectionEventArgs(connectionInfo));
+
+                    // Notify all other clients about the new client
+                    _ = Task.Run(() => NotifyClientJoined(clientId, clientName));
+                }
             }
         }
 
@@ -83,6 +92,9 @@ namespace Messaging.ModelLibrary.Abstract
                 {
                     clientInfo.ConnectionInfo.IsActive = false;
                     ClientDisconnected?.Invoke(this, new ConnectionEventArgs(clientInfo.ConnectionInfo));
+
+                    // Notify all other clients about the client leaving
+                    _ = Task.Run(() => NotifyClientLeft(clientId, clientInfo.ConnectionInfo.Name));
                 }
             }
         }
@@ -95,7 +107,7 @@ namespace Messaging.ModelLibrary.Abstract
             }
         }
 
-        protected virtual string GetClientAddress(object transportSpecificData)
+        protected virtual string GetClientAddress(object? transportSpecificData)
         {
             return transportSpecificData?.ToString() ?? "Unknown";
         }
@@ -124,7 +136,7 @@ namespace Messaging.ModelLibrary.Abstract
         }
         #endregion
 
-        #region Message Handling
+        #region Enhanced Message Handling
         protected virtual void HandleReceivedMessage(Message message, string clientId)
         {
             try
@@ -180,12 +192,8 @@ namespace Messaging.ModelLibrary.Abstract
         {
             try
             {
-                var onlineClients = _connections.Values
-                    .Where(c => c.ConnectionInfo.IsActive && c.ConnectionInfo.Id != requestingClientId)
-                    .Select(c => new { c.ConnectionInfo.Id, c.ConnectionInfo.Name })
-                    .ToList();
-
-                var clientListJson = System.Text.Json.JsonSerializer.Serialize(onlineClients);
+                var onlineClients = GetOnlineClientsForBroadcast(requestingClientId);
+                var clientListJson = JsonSerializer.Serialize(onlineClients);
 
                 var responseMessage = new Message
                 {
@@ -202,11 +210,75 @@ namespace Messaging.ModelLibrary.Abstract
                 OnErrorOccurred(new ErrorEventArgs($"Send client list error: {ex.Message}", ex));
             }
         }
+
+        protected virtual async Task NotifyClientJoined(string clientId, string clientName)
+        {
+            try
+            {
+                var joinMessage = new Message
+                {
+                    Content = $"CLIENT_JOINED:{clientName}",
+                    Sender = "System",
+                    Receiver = "*",
+                    Type = MessageType.System
+                };
+
+                // Send to all clients except the one that just joined
+                var tasks = _connections.Values
+                    .Where(c => c.ConnectionInfo.Id != clientId && c.ConnectionInfo.IsActive)
+                    .Select(c => SendMessageAsync(joinMessage, c.ConnectionInfo.Id));
+
+                await Task.WhenAll(tasks);
+            }
+            catch (Exception ex)
+            {
+                OnErrorOccurred(new ErrorEventArgs($"Error notifying client joined: {ex.Message}", ex));
+            }
+        }
+
+        protected virtual async Task NotifyClientLeft(string clientId, string clientName)
+        {
+            try
+            {
+                var leftMessage = new Message
+                {
+                    Content = $"CLIENT_LEFT:{clientName}",
+                    Sender = "System",
+                    Receiver = "*",
+                    Type = MessageType.System
+                };
+
+                // Send to all remaining clients
+                var tasks = _connections.Values
+                    .Where(c => c.ConnectionInfo.Id != clientId && c.ConnectionInfo.IsActive)
+                    .Select(c => SendMessageAsync(leftMessage, c.ConnectionInfo.Id));
+
+                await Task.WhenAll(tasks);
+            }
+            catch (Exception ex)
+            {
+                OnErrorOccurred(new ErrorEventArgs($"Error notifying client left: {ex.Message}", ex));
+            }
+        }
+
+        protected virtual List<object> GetOnlineClientsForBroadcast(string excludeClientId)
+        {
+            return _connections.Values
+                .Where(c => c.ConnectionInfo.IsActive && c.ConnectionInfo.Id != excludeClientId)
+                .Select(c => new
+                {
+                    c.ConnectionInfo.Id,
+                    c.ConnectionInfo.Name,
+                    c.ConnectionInfo.Address,
+                    c.ConnectionInfo.ConnectedAt,
+                    TransportType = TransportType.ToString()
+                })
+                .ToList<object>();
+        }
         #endregion
 
         #region Event Helpers
         protected virtual void OnErrorOccurred(ErrorEventArgs e) => ErrorOccurred?.Invoke(this, e);
-
         protected virtual void OnClientDisconnected(ConnectionEventArgs e) => ClientDisconnected?.Invoke(this, e);
         #endregion
 
@@ -222,7 +294,7 @@ namespace Messaging.ModelLibrary.Abstract
                 {
                     StopAsync().Wait(3000);
                 }
-                catch { }
+                catch {/*ignore*/ }
             }
         }
         #endregion
@@ -230,9 +302,9 @@ namespace Messaging.ModelLibrary.Abstract
         #region Helper Classes
         protected class ClientConnectionInfo
         {
-            public ConnectionInfo ConnectionInfo { get; set; }
+            public ConnectionInfo ConnectionInfo { get; set; } = new();
             public DateTime LastActivity { get; set; }
-            public object TransportData { get; set; }
+            public object? TransportData { get; set; }
         }
         #endregion
     }

@@ -17,6 +17,7 @@ using System.Windows.Input;
 using Microsoft.Win32;
 using System.IO;
 using System.Windows.Threading;
+using Messaging.ModelLibrary.Mqtt;
 using ClientInfo = Messaging.ModelLibrary.ClientInfo;
 using ErrorEventArgs = Messaging.ModelLibrary.ErrorEventArgs;
 using MessagingService = Messaging.ModelLibrary.Abstract;
@@ -32,7 +33,7 @@ public class MainViewModel : INotifyPropertyChanged
     private bool _isConnected;
     private string _selectedRecipient = "Everyone";
     private string _groupName = string.Empty;
-    private bool _requiresAcknowledgment = false;
+    private bool _requiresAcknowledgment;
     private MessagePriority _selectedPriority = MessagePriority.Normal;
     private string _searchText = string.Empty;
 
@@ -46,23 +47,23 @@ public class MainViewModel : INotifyPropertyChanged
     private int _tcpPort = 8080;
     private string _udpHost = "localhost";
     private int _udpPort = 11000;
-    private int _udpLocalPort = 0;
+    private int _udpLocalPort;
     private string _webSocketHost = "localhost";
     private int _webSocketPort = 8080;
     private string _webSocketPath = "/";
-    private bool _webSocketUseSSL = false;
+    private bool _webSocketUseSSL;
     private string _signalRHost = "localhost";
     private int _signalRPort = 5003;
     private string _signalRHubPath = "/messagingHub";
-    private bool _signalRUseHttps = false;
+    private bool _signalRUseHttps;
     private bool _signalREnableAutoReconnect = true;
     private string _grpcHost = "localhost";
     private int _grpcPort = 5002;
-    private bool _grpcUseHttps = false;
+    private bool _grpcUseHttps;
     private string _rtpHost = "localhost";
     private int _rtpPort = 5004;
-    private int _rtpLocalPort = 0;
-    private bool _rtpEnableMulticast = false;
+    private int _rtpLocalPort;
+    private bool _rtpEnableMulticast;
     private string _rtpMulticastAddress = "224.1.1.1";
 
     public MainViewModel()
@@ -87,7 +88,8 @@ public class MainViewModel : INotifyPropertyChanged
             TransportType.WebSocket,
             TransportType.SignalR,
             TransportType.gRPC,
-            TransportType.Rtp
+            TransportType.Rtp,
+            TransportType.Mqtt
         };
 
         MessagePriorities = new ObservableCollection<MessagePriority>
@@ -311,6 +313,7 @@ public class MainViewModel : INotifyPropertyChanged
                 TransportType.SignalR => new SignalRClient(),
                 TransportType.gRPC => new GrpcClient(),
                 TransportType.Rtp => new RtpClient(),
+                TransportType.Mqtt => new MqttMessageClient(),
                 _ => throw new ArgumentException($"Unknown transport type: {SelectedTransportType}")
             };
 
@@ -382,6 +385,7 @@ public class MainViewModel : INotifyPropertyChanged
                 TransportType.SignalR => new SignalRTransport(SignalRHost, SignalRPort, SignalRHubPath),
                 TransportType.gRPC => new GrpcTransport(GrpcHost, GrpcPort),
                 TransportType.Rtp => new RtpTransport(RtpPort, System.Net.IPAddress.Parse(RtpHost)),
+                TransportType.Mqtt => new MqttTransport(),
                 _ => throw new ArgumentException($"Unknown transport type: {SelectedTransportType}")
             };
 
@@ -867,7 +871,7 @@ public class MainViewModel : INotifyPropertyChanged
 
     #region Event Handlers
 
-    private void OnMessageReceived(object sender, MessageEventArgs e)
+    private void OnMessageReceived(object? sender, MessageEventArgs e)
     {
         // Handle file messages
         if (e.Message.Metadata.ContainsKey("IsFile") && (bool)e.Message.Metadata["IsFile"])
@@ -1014,6 +1018,13 @@ public class MainViewModel : INotifyPropertyChanged
                 ["LocalPort"] = RtpLocalPort,
                 ["ClientName"] = ClientName
             },
+            TransportType.Mqtt => new Dictionary<string, object>
+            {
+                ["Host"] = TcpHost,
+                ["Port"] = TcpPort,
+                ["ClientId"] = ClientName,
+                ["Timeout"] = 5000
+            },
             _ => new Dictionary<string, object>()
         };
     }
@@ -1064,6 +1075,14 @@ public class MainViewModel : INotifyPropertyChanged
                 ["BindAddress"] = System.Net.IPAddress.Parse(RtpHost),
                 ["EnableMulticast"] = RtpEnableMulticast,
                 ["MulticastAddress"] = RtpMulticastAddress
+            },
+            TransportType.Mqtt => new Dictionary<string, object>
+            {
+                ["Host"] = TcpHost,
+                ["Port"] = TcpPort,
+                ["ClientId"] = ClientName,
+                ["EnableTls"] = false,
+                ["AutoReconnectDelay"] = TimeSpan.FromSeconds(5)
             },
             _ => new Dictionary<string, object>()
         };
