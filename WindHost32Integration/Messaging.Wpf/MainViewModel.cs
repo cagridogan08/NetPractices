@@ -19,6 +19,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using Messaging.ModelLibrary.Redis;
 using ClientInfo = Messaging.ModelLibrary.ClientInfo;
 using ErrorEventArgs = Messaging.ModelLibrary.ErrorEventArgs;
 using MessagingService = Messaging.ModelLibrary.Abstract;
@@ -90,6 +91,15 @@ public class MainViewModel : INotifyPropertyChanged
     private int _zeroMqSendTimeout = 5000;
     private int _zeroMqReceiveTimeout = 5000;
 
+    // Redis settings
+    private string _redisHost = "localhost";
+    private int _redisPort = 6379;
+    private string _redisPassword = string.Empty;
+    private int _redisDatabase = 0;
+    private string _redisClientName = Environment.UserName;
+    private int _redisConnectTimeout = 5000;
+    private int _redisSyncTimeout = 5000;
+
     public MainViewModel()
     {
         _messagingService = new MessagingService.MessagingService();
@@ -114,7 +124,8 @@ public class MainViewModel : INotifyPropertyChanged
             TransportType.gRPC,
             TransportType.Rtp,
             TransportType.Mqtt,
-            TransportType.ZeroMQ
+            TransportType.ZeroMQ,
+            TransportType.Redis
         };
 
         MessagePriorities = new ObservableCollection<MessagePriority>
@@ -269,6 +280,7 @@ public class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsRtpSelected));
             OnPropertyChanged(nameof(IsMqttSelected));
             OnPropertyChanged(nameof(IsZeroMqSelected));
+            OnPropertyChanged(nameof(IsRedisSelected));
         }
     }
 
@@ -282,6 +294,8 @@ public class MainViewModel : INotifyPropertyChanged
     public bool IsRtpSelected => SelectedTransportType == TransportType.Rtp;
     public bool IsMqttSelected => SelectedTransportType == TransportType.Mqtt;
     public bool IsZeroMqSelected => SelectedTransportType == TransportType.ZeroMQ;
+
+    public bool IsRedisSelected => SelectedTransportType == TransportType.Redis;
 
     // Existing transport configuration properties
     public string PipeName { get => _pipeName; set { _pipeName = value; OnPropertyChanged(); } }
@@ -332,6 +346,14 @@ public class MainViewModel : INotifyPropertyChanged
     public int ZeroMqSendTimeout { get => _zeroMqSendTimeout; set { _zeroMqSendTimeout = value; OnPropertyChanged(); } }
     public int ZeroMqReceiveTimeout { get => _zeroMqReceiveTimeout; set { _zeroMqReceiveTimeout = value; OnPropertyChanged(); } }
 
+    public string RedisHost { get => _redisHost; set { _redisHost = value; OnPropertyChanged(); } }
+    public int RedisPort { get => _redisPort; set { _redisPort = value; OnPropertyChanged(); } }
+    public string RedisPassword { get => _redisPassword; set { _redisPassword = value; OnPropertyChanged(); } }
+    public int RedisDatabase { get => _redisDatabase; set { _redisDatabase = value; OnPropertyChanged(); } }
+    public string RedisClientName { get => _redisClientName; set { _redisClientName = value; OnPropertyChanged(); } }
+    public int RedisConnectTimeout { get => _redisConnectTimeout; set { _redisConnectTimeout = value; OnPropertyChanged(); } }
+    public int RedisSyncTimeout { get => _redisSyncTimeout; set { _redisSyncTimeout = value; OnPropertyChanged(); } }
+
     #endregion
 
     #region Commands
@@ -369,6 +391,7 @@ public class MainViewModel : INotifyPropertyChanged
                 TransportType.Rtp => new RtpClient(),
                 TransportType.Mqtt => new MqttMessageClient(),
                 TransportType.ZeroMQ => new ZeroMqClient(),
+                TransportType.Redis => new RedisClient(),
                 _ => throw new ArgumentException($"Unknown transport type: {SelectedTransportType}")
             };
 
@@ -442,6 +465,7 @@ public class MainViewModel : INotifyPropertyChanged
                 TransportType.Rtp => new RtpTransport(RtpPort, System.Net.IPAddress.Parse(RtpHost)),
                 TransportType.Mqtt => new MqttTransport(),
                 TransportType.ZeroMQ => new ZeroMqTransport(),
+                TransportType.Redis => new RedisTransport(),
                 _ => throw new ArgumentException($"Unknown transport type: {SelectedTransportType}")
             };
 
@@ -1098,6 +1122,16 @@ public class MainViewModel : INotifyPropertyChanged
                 ["SendTimeout"] = ZeroMqSendTimeout,
                 ["ReceiveTimeout"] = ZeroMqReceiveTimeout
             },
+            TransportType.Redis => new Dictionary<string, object>  // Added Redis configuration
+            {
+                ["Host"] = RedisHost,
+                ["Port"] = RedisPort,
+                ["Password"] = string.IsNullOrEmpty(RedisPassword) ? null : RedisPassword,
+                ["Database"] = RedisDatabase,
+                ["ClientName"] = RedisClientName,
+                ["ConnectTimeout"] = RedisConnectTimeout,
+                ["SyncTimeout"] = RedisSyncTimeout
+            },
             _ => new Dictionary<string, object>()
         };
     }
@@ -1168,6 +1202,16 @@ public class MainViewModel : INotifyPropertyChanged
                 ["SendTimeout"] = ZeroMqSendTimeout,
                 ["ReceiveTimeout"] = ZeroMqReceiveTimeout
             },
+            TransportType.Redis => new Dictionary<string, object>  // Added Redis server configuration
+            {
+                ["Host"] = RedisHost,
+                ["Port"] = RedisPort,
+                ["Password"] = string.IsNullOrEmpty(RedisPassword) ? null : RedisPassword,
+                ["Database"] = RedisDatabase,
+                ["ClientName"] = RedisClientName,
+                ["ConnectTimeout"] = RedisConnectTimeout,
+                ["SyncTimeout"] = RedisSyncTimeout
+            },
             _ => new Dictionary<string, object>()
         };
     }
@@ -1187,6 +1231,7 @@ public class MainViewModel : INotifyPropertyChanged
             TransportType.gRPC => $"gRPC server on {(GrpcUseHttps ? "https" : "http")}://{GrpcHost}:{GrpcPort}",
             TransportType.Rtp => $"RTP server on {RtpHost}:{RtpPort}" + (RtpEnableMulticast ? $" (MC: {RtpMulticastAddress})" : ""),
             TransportType.ZeroMQ => $"ZeroMQ server on {ZeroMqHost} (Router:{ZeroMqRouterPort}, Pub:{ZeroMqPublisherPort})",
+            TransportType.Redis => $"Redis server on {RedisHost}:{RedisPort}, DB: {RedisDatabase}",
             _ => $"Server running on {SelectedTransportType}"
         };
     }

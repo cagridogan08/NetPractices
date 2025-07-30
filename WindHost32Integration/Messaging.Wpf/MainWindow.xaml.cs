@@ -1,7 +1,8 @@
-﻿using System.Windows;
-using System.Windows.Input;
+﻿using System.Globalization;
+using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Data;
-using System.Globalization;
+using System.Windows.Input;
 
 namespace Messaging.Wpf
 {
@@ -25,6 +26,15 @@ namespace Messaging.Wpf
                 {
                     viewModel.SendMessageCommand.Execute(null);
                 }
+            }
+        }
+
+        private void RedisPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
+        {
+            if (sender is PasswordBox passwordBox && DataContext is MainViewModel viewModel)
+            {
+                // Update the RedisPassword property in the ViewModel
+                viewModel.RedisPassword = passwordBox.Password;
             }
         }
     }

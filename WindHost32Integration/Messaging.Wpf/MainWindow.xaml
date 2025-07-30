@@ -58,6 +58,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -335,7 +336,7 @@
 
                     <!--  MQTT Configuration  -->
                     <Grid
-                        Grid.Row="4"
+                        Grid.Row="5"
                         Grid.Column="0"
                         Grid.ColumnSpan="4"
                         Margin="5"
@@ -420,7 +421,7 @@
 
                     <!--  ZeroMQ Configuration  -->
                     <StackPanel
-                        Grid.Row="5"
+                        Grid.Row="6"
                         Grid.Column="0"
                         Grid.ColumnSpan="4"
                         Margin="5"
@@ -461,6 +462,82 @@
                             IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
                             Text="{Binding ZeroMqReceiveTimeout}" />
                     </StackPanel>
+
+                    <!--  Redis Configuration  -->
+                    <Grid
+                        Grid.Row="6"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="4"
+                        Margin="5"
+                        Visibility="{Binding IsRedisSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!--  First row of Redis settings  -->
+                        <StackPanel Grid.Row="0" Orientation="Horizontal">
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                FontSize="16"
+                                Text="🔴 " />
+                            <Label VerticalAlignment="Center" Content="Host:" />
+                            <TextBox
+                                Width="120"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding RedisHost}" />
+                            <Label VerticalAlignment="Center" Content="Port:" />
+                            <TextBox
+                                Width="60"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding RedisPort}" />
+                            <Label VerticalAlignment="Center" Content="Password:" />
+                            <PasswordBox
+                                Name="RedisPasswordBox"
+                                Width="100"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                PasswordChanged="RedisPasswordBox_PasswordChanged" />
+                            <Label VerticalAlignment="Center" Content="DB:" />
+                            <TextBox
+                                Width="40"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding RedisDatabase}" />
+                        </StackPanel>
+
+                        <!--  Second row of Redis settings  -->
+                        <StackPanel
+                            Grid.Row="1"
+                            Margin="21,0,0,0"
+                            Orientation="Horizontal">
+                            <Label VerticalAlignment="Center" Content="Client Name:" />
+                            <TextBox
+                                Width="120"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding RedisClientName}" />
+                            <Label VerticalAlignment="Center" Content="Connect TO:" />
+                            <TextBox
+                                Width="60"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding RedisConnectTimeout}" />
+                            <Label VerticalAlignment="Center" Content="ms" />
+                            <Label
+                                Margin="10,0,0,0"
+                                VerticalAlignment="Center"
+                                Content="Sync TO:" />
+                            <TextBox
+                                Width="60"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding RedisSyncTimeout}" />
+                            <Label VerticalAlignment="Center" Content="ms" />
+                        </StackPanel>
+                    </Grid>
                 </Grid>
             </ScrollViewer>
         </GroupBox>
