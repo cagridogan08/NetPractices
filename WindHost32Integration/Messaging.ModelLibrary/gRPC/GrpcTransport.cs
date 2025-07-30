@@ -15,7 +15,7 @@ namespace Messaging.ModelLibrary.Grpc;
 /// <summary>
 /// Enhanced gRPC transport with comprehensive client-to-client messaging support
 /// </summary>
-public class GrpcTransport(string address = "localhost", int port = 5000) : MessageTransportBase
+public class GrpcTransport(string? address = "localhost", int? port = 5000) : MessageTransportBase
 {
     #region Fields
 
@@ -34,10 +34,6 @@ public class GrpcTransport(string address = "localhost", int port = 5000) : Mess
         _clientStreams.Values.Select(c => c.ConnectionInfo).ToList();
     #endregion
 
-    #region Constructor
-
-    #endregion
-
     #region Transport Implementation
     public override async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
     {
@@ -45,8 +41,8 @@ public class GrpcTransport(string address = "localhost", int port = 5000) : Mess
         {
             await StopAsync();
 
-            var address1 = configuration?.GetValueOrDefault("Address", address) as string ?? address;
-            var port1 = configuration?.GetValueOrDefault("Port", port) as int? ?? port;
+            var address1 = configuration?.GetValueOrDefault("Address", "localhost") as string ?? address;
+            var port1 = configuration?.GetValueOrDefault("Port", 5000) as int? ?? port;
             var enableHttps = configuration?.GetValueOrDefault("EnableHttps", false) as bool? ?? false;
             var certPath = configuration?.GetValueOrDefault("CertificatePath") as string;
             var certPassword = configuration?.GetValueOrDefault("CertificatePassword") as string;
@@ -66,8 +62,8 @@ public class GrpcTransport(string address = "localhost", int port = 5000) : Mess
               // Add gRPC services - THIS WAS MISSING!
               services.AddGrpc(options =>
               {
-                  options.MaxReceiveMessageSize = 4 * 1024 * 1024; // 4MB
-                  options.MaxSendMessageSize = 4 * 1024 * 1024; // 4MB
+                  options.MaxReceiveMessageSize = maxReceiveSize; // 4MB
+                  options.MaxSendMessageSize = maxSendSize; // 4MB
               });
 
               // Add CORS for cross-origin requests (for web clients)
