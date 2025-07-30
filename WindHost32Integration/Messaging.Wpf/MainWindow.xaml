@@ -332,6 +332,92 @@
                             IsEnabled="{Binding RtpEnableMulticast}"
                             Text="{Binding RtpMulticastAddress}" />
                     </StackPanel>
+
+                    <!--  MQTT Configuration  -->
+                    <Grid
+                        Grid.Row="4"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="4"
+                        Margin="5"
+                        Visibility="{Binding IsMqttSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!--  First row of MQTT settings  -->
+                        <StackPanel Grid.Row="0" Orientation="Horizontal">
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                FontSize="16"
+                                Text="📡 " />
+                            <Label VerticalAlignment="Center" Content="Host:" />
+                            <TextBox
+                                Width="100"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding MqttHost}" />
+                            <Label VerticalAlignment="Center" Content="Port:" />
+                            <TextBox
+                                Width="50"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding MqttPort}" />
+                            <Label VerticalAlignment="Center" Content="User:" />
+                            <TextBox
+                                Width="80"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding MqttUsername}" />
+                            <Label VerticalAlignment="Center" Content="Pass:" />
+                            <TextBox
+                                Width="80"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding MqttPassword}" />
+                            <CheckBox
+                                Margin="5"
+                                VerticalAlignment="Center"
+                                Content="TLS"
+                                IsChecked="{Binding MqttUseTls}"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}" />
+                            <CheckBox
+                                Margin="5"
+                                VerticalAlignment="Center"
+                                Content="Clean"
+                                IsChecked="{Binding MqttCleanSession}"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}" />
+                        </StackPanel>
+
+                        <!--  Second row of MQTT settings  -->
+                        <StackPanel
+                            Grid.Row="1"
+                            Margin="21,0,0,0"
+                            Orientation="Horizontal">
+                            <Label VerticalAlignment="Center" Content="Keep Alive:" />
+                            <TextBox
+                                Width="40"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding MqttKeepAliveSeconds}" />
+                            <Label VerticalAlignment="Center" Content="s" />
+                            <Label
+                                Margin="10,0,0,0"
+                                VerticalAlignment="Center"
+                                Content="WS Path:" />
+                            <TextBox
+                                Width="80"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding MqttWebSocketPath}" />
+                            <Label VerticalAlignment="Center" Content="Will Topic:" />
+                            <TextBox
+                                Width="100"
+                                Margin="5"
+                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                                Text="{Binding MqttWillTopic}" />
+                        </StackPanel>
+                    </Grid>
                 </Grid>
             </ScrollViewer>
         </GroupBox>

@@ -111,6 +111,35 @@ public record MqttServerConfiguration(
         => username == Username && password == Password;
 }
 
+// <summary>
+/// Configuration helper for ZeroMQ
+/// </summary>
+internal class ZeroMqConfig
+{
+    public string Host { get; set; } = "localhost";
+    public int RouterPort { get; set; } = 5555;
+    public int PublisherPort { get; set; } = 5556;
+    public string ClientName { get; set; } = Environment.UserName;
+    public int SendTimeout { get; set; } = 5000;
+    public int ReceiveTimeout { get; set; } = 5000;
+
+    public static ZeroMqConfig FromDictionary(Dictionary<string, object>? configuration)
+    {
+        if (configuration == null) return new ZeroMqConfig();
+
+        return new ZeroMqConfig
+        {
+            Host = configuration.GetValueOrDefault("Host", "localhost") as string ?? "localhost",
+            RouterPort = configuration.GetValueOrDefault("RouterPort", 5555) as int? ?? 5555,
+            PublisherPort = configuration.GetValueOrDefault("PublisherPort", 5556) as int? ?? 5556,
+            ClientName = configuration.GetValueOrDefault("ClientName", Environment.UserName) as string ?? Environment.UserName,
+            SendTimeout = configuration.GetValueOrDefault("SendTimeout", 5000) as int? ?? 5000,
+            ReceiveTimeout = configuration.GetValueOrDefault("ReceiveTimeout", 5000) as int? ?? 5000
+        };
+    }
+}
+
+
 #endregion
 
 

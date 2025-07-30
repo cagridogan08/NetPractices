@@ -66,6 +66,20 @@ public class MainViewModel : INotifyPropertyChanged
     private bool _rtpEnableMulticast;
     private string _rtpMulticastAddress = "224.1.1.1";
 
+
+    private string _mqttHost = "localhost";
+    private int _mqttPort = 1883;
+    private string _mqttClientId = Environment.UserName;
+    private string _mqttUsername = string.Empty;
+    private string _mqttPassword = string.Empty;
+    private bool _mqttUseTls = false;
+    private int _mqttTlsPort = 8883;
+    private string _mqttWebSocketPath = string.Empty;
+    private bool _mqttCleanSession = true;
+    private int _mqttKeepAlive = 15;
+    private bool _mqttAutoReconnect = true;
+    private int _mqttAutoReconnectDelay = 5;
+
     public MainViewModel()
     {
         _messagingService = new MessagingService.MessagingService();
@@ -241,6 +255,7 @@ public class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsSignalRSelected));
             OnPropertyChanged(nameof(IsGrpcSelected));
             OnPropertyChanged(nameof(IsRtpSelected));
+            OnPropertyChanged(nameof(IsMqttSelected));
         }
     }
 
@@ -252,6 +267,8 @@ public class MainViewModel : INotifyPropertyChanged
     public bool IsSignalRSelected => SelectedTransportType == TransportType.SignalR;
     public bool IsGrpcSelected => SelectedTransportType == TransportType.gRPC;
     public bool IsRtpSelected => SelectedTransportType == TransportType.Rtp;
+
+    public bool IsMqttSelected => SelectedTransportType == TransportType.Mqtt;
 
     public string PipeName { get => _pipeName; set { _pipeName = value; OnPropertyChanged(); } }
     public string ServerName { get => _serverName; set { _serverName = value; OnPropertyChanged(); } }
@@ -277,6 +294,22 @@ public class MainViewModel : INotifyPropertyChanged
     public int RtpLocalPort { get => _rtpLocalPort; set { _rtpLocalPort = value; OnPropertyChanged(); } }
     public bool RtpEnableMulticast { get => _rtpEnableMulticast; set { _rtpEnableMulticast = value; OnPropertyChanged(); } }
     public string RtpMulticastAddress { get => _rtpMulticastAddress; set { _rtpMulticastAddress = value; OnPropertyChanged(); } }
+
+    #region MQTT Configuration Properties
+
+    public string MqttHost { get => _mqttHost; set { _mqttHost = value; OnPropertyChanged(); } }
+    public int MqttPort { get => _mqttPort; set { _mqttPort = value; OnPropertyChanged(); } }
+    public string MqttClientId { get => _mqttClientId; set { _mqttClientId = value; OnPropertyChanged(); } }
+    public string MqttUsername { get => _mqttUsername; set { _mqttUsername = value; OnPropertyChanged(); } }
+    public string MqttPassword { get => _mqttPassword; set { _mqttPassword = value; OnPropertyChanged(); } }
+    public bool MqttUseTls { get => _mqttUseTls; set { _mqttUseTls = value; OnPropertyChanged(); } }
+    public int MqttTlsPort { get => _mqttTlsPort; set { _mqttTlsPort = value; OnPropertyChanged(); } }
+    public string MqttWebSocketPath { get => _mqttWebSocketPath; set { _mqttWebSocketPath = value; OnPropertyChanged(); } }
+    public bool MqttCleanSession { get => _mqttCleanSession; set { _mqttCleanSession = value; OnPropertyChanged(); } }
+    public int MqttKeepAlive { get => _mqttKeepAlive; set { _mqttKeepAlive = value; OnPropertyChanged(); } }
+    public bool MqttAutoReconnect { get => _mqttAutoReconnect; set { _mqttAutoReconnect = value; OnPropertyChanged(); } }
+    public int MqttAutoReconnectDelay { get => _mqttAutoReconnectDelay; set { _mqttAutoReconnectDelay = value; OnPropertyChanged(); } }
+    #endregion
 
     #endregion
 

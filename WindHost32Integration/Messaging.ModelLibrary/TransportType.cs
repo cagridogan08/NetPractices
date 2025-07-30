@@ -12,4 +12,5 @@ public enum TransportType
     RabbitMQ,
     Rtp,
     Mqtt,
+    ZeroMQ,
 }

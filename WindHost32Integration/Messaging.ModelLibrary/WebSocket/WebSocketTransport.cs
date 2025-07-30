@@ -19,6 +19,20 @@ public class WebSocketTransport : MessageTransportBase
     public override TransportType TransportType => TransportType.WebSocket;
     #endregion
 
+    /// <summary>
+    /// Starts the WebSocket server with the provided configuration parameters.
+    /// </summary>
+    /// <param name="configuration">
+    /// Optional configuration dictionary containing settings such as:
+    /// <list type="bullet">
+    /// <item><description><c>"Host"</c> (string): The hostname or IP address to bind. Default is <c>"localhost"</c>.</description></item>
+    /// <item><description><c>"Port"</c> (int): The port number to listen on. Default is <c>8080</c>.</description></item>
+    /// <item><description><c>"Path"</c> (string): The URL path prefix. Default is <c>"/"</c>.</description></item>
+    /// </list>
+    /// </param>
+    /// <returns>
+    /// Returns <c>true</c> if the server starts successfully; otherwise, <c>false</c>.
+    /// </returns>
     public override async Task<bool> StartAsync(Dictionary<string, object>? configuration = null)
     {
         try
