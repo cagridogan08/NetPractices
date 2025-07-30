@@ -20,6 +20,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Messaging.ModelLibrary.Redis;
+using Messaging.ModelLibrary.ServerSentEvents;
 using ClientInfo = Messaging.ModelLibrary.ClientInfo;
 using ErrorEventArgs = Messaging.ModelLibrary.ErrorEventArgs;
 using MessagingService = Messaging.ModelLibrary.Abstract;
@@ -99,6 +100,11 @@ public class MainViewModel : INotifyPropertyChanged
     private int _redisConnectTimeout = 5000;
     private int _redisSyncTimeout = 5000;
 
+    private string _sseHost = "localhost";
+    private int _ssePort = 8080;
+    private string _sseEventsPath = "/events";
+    private string _sseMessagesPath = "/messages";
+
     public MainViewModel()
     {
         _messagingService = new MessagingService.MessagingService();
@@ -124,7 +130,8 @@ public class MainViewModel : INotifyPropertyChanged
             TransportType.Rtp,
             TransportType.Mqtt,
             TransportType.ZeroMQ,
-            TransportType.Redis
+            TransportType.Redis,
+            TransportType.ServerSentEvents
         };
 
         MessagePriorities = new ObservableCollection<MessagePriority>
@@ -280,6 +287,7 @@ public class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsMqttSelected));
             OnPropertyChanged(nameof(IsZeroMqSelected));
             OnPropertyChanged(nameof(IsRedisSelected));
+            OnPropertyChanged(nameof(IsSseSelected));
         }
     }
 
@@ -295,6 +303,8 @@ public class MainViewModel : INotifyPropertyChanged
     public bool IsZeroMqSelected => SelectedTransportType == TransportType.ZeroMQ;
 
     public bool IsRedisSelected => SelectedTransportType == TransportType.Redis;
+
+    public bool IsSseSelected => SelectedTransportType == TransportType.ServerSentEvents;
 
     // Existing transport configuration properties
     public string PipeName { get => _pipeName; set { _pipeName = value; OnPropertyChanged(); } }
@@ -352,6 +362,13 @@ public class MainViewModel : INotifyPropertyChanged
     public int RedisConnectTimeout { get => _redisConnectTimeout; set { _redisConnectTimeout = value; OnPropertyChanged(); } }
     public int RedisSyncTimeout { get => _redisSyncTimeout; set { _redisSyncTimeout = value; OnPropertyChanged(); } }
 
+    ///SSE Configuration Properties
+
+    public string SseHost { get => _sseHost; set { _sseHost = value; OnPropertyChanged(); } }
+    public int SsePort { get => _ssePort; set { _ssePort = value; OnPropertyChanged(); } }
+    public string SseEventsPath { get => _sseEventsPath; set { _sseEventsPath = value; OnPropertyChanged(); } }
+    public string SseMessagesPath { get => _sseMessagesPath; set { _sseMessagesPath = value; OnPropertyChanged(); } }
+
     #endregion
 
     #region Commands
@@ -390,6 +407,7 @@ public class MainViewModel : INotifyPropertyChanged
                 TransportType.Mqtt => new MqttMessageClient(),
                 TransportType.ZeroMQ => new ZeroMqClient(),
                 TransportType.Redis => new RedisClient(),
+                TransportType.ServerSentEvents => new ServerSentEventClient(),
                 _ => throw new ArgumentException($"Unknown transport type: {SelectedTransportType}")
             };
 
@@ -464,6 +482,7 @@ public class MainViewModel : INotifyPropertyChanged
                 TransportType.Mqtt => new MqttTransport(),
                 TransportType.ZeroMQ => new ZeroMqTransport(),
                 TransportType.Redis => new RedisTransport(),
+                TransportType.ServerSentEvents => new ServerSentEventTransport(),
                 _ => throw new ArgumentException($"Unknown transport type: {SelectedTransportType}")
             };
 
@@ -1130,6 +1149,14 @@ public class MainViewModel : INotifyPropertyChanged
                 ["ConnectTimeout"] = RedisConnectTimeout,
                 ["SyncTimeout"] = RedisSyncTimeout
             },
+            TransportType.ServerSentEvents => new Dictionary<string, object>  // Add this case
+            {
+                ["Host"] = SseHost,
+                ["Port"] = SsePort,
+                ["EventsPath"] = SseEventsPath,
+                ["MessagesPath"] = SseMessagesPath,
+                ["ClientName"] = ClientName
+            },
             _ => new Dictionary<string, object>()
         };
     }
@@ -1210,6 +1237,13 @@ public class MainViewModel : INotifyPropertyChanged
                 ["ConnectTimeout"] = RedisConnectTimeout,
                 ["SyncTimeout"] = RedisSyncTimeout
             },
+            TransportType.ServerSentEvents => new Dictionary<string, object>  // Add this case
+            {
+                ["Host"] = SseHost,
+                ["Port"] = SsePort,
+                ["EventsPath"] = SseEventsPath,
+                ["MessagesPath"] = SseMessagesPath
+            },
             _ => new Dictionary<string, object>()
         };
     }
@@ -1230,6 +1264,7 @@ public class MainViewModel : INotifyPropertyChanged
             TransportType.Rtp => $"RTP server on {RtpHost}:{RtpPort}" + (RtpEnableMulticast ? $" (MC: {RtpMulticastAddress})" : ""),
             TransportType.ZeroMQ => $"ZeroMQ server on {ZeroMqHost} (Router:{ZeroMqRouterPort}, Pub:{ZeroMqPublisherPort})",
             TransportType.Redis => $"Redis server on {RedisHost}:{RedisPort}, DB: {RedisDatabase}",
+            TransportType.ServerSentEvents => $"SSE server on http://{SseHost}:{SsePort}{SseEventsPath}",  // Add this line
             _ => $"Server running on {SelectedTransportType}"
         };
     }

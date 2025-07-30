@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Messaging.ModelLibrary.ServerSentEvents;
 
-internal class ServerSentEventTransport : MessageTransportBase
+public class ServerSentEventTransport : MessageTransportBase
 {
     #region Fields
 

@@ -15,7 +15,7 @@ namespace Messaging.ModelLibrary.Grpc;
 /// <summary>
 /// Enhanced gRPC transport with comprehensive client-to-client messaging support
 /// </summary>
-public class GrpcTransport(string? address = "localhost", int? port = 5000) : MessageTransportBase
+public class GrpcTransport(string address = "localhost", int port = 5000) : MessageTransportBase
 {
     #region Fields
 

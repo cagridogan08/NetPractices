@@ -462,7 +462,43 @@
                             IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
                             Text="{Binding ZeroMqReceiveTimeout}" />
                     </StackPanel>
-
+                    <!--  Server-Sent Events Configuration  -->
+                    <StackPanel
+                        Grid.Row="6"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="4"
+                        Margin="5"
+                        Orientation="Horizontal"
+                        Visibility="{Binding IsSseSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            FontSize="16"
+                            Text="📡 " />
+                        <Label VerticalAlignment="Center" Content="Host:" />
+                        <TextBox
+                            Width="120"
+                            Margin="5"
+                            IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                            Text="{Binding SseHost}" />
+                        <Label VerticalAlignment="Center" Content="Port:" />
+                        <TextBox
+                            Width="60"
+                            Margin="5"
+                            IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                            Text="{Binding SsePort}" />
+                        <Label VerticalAlignment="Center" Content="Events Path:" />
+                        <TextBox
+                            Width="80"
+                            Margin="5"
+                            IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                            Text="{Binding SseEventsPath}" />
+                        <Label VerticalAlignment="Center" Content="Messages Path:" />
+                        <TextBox
+                            Width="100"
+                            Margin="5"
+                            IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
+                            Text="{Binding SseMessagesPath}" />
+                    </StackPanel>
                     <!--  Redis Configuration  -->
                     <Grid
                         Grid.Row="6"
