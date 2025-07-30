@@ -1,5 +1,7 @@
 ﻿using Messaging.ModelLibrary;
 using Messaging.ModelLibrary.Abstract;
+using Messaging.ModelLibrary.Grpc;
+using Messaging.ModelLibrary.Mqtt;
 using Messaging.ModelLibrary.Pipe;
 using Messaging.ModelLibrary.Rtp;
 using Messaging.ModelLibrary.RTP;
@@ -7,17 +9,16 @@ using Messaging.ModelLibrary.SignalR;
 using Messaging.ModelLibrary.Tcp;
 using Messaging.ModelLibrary.Udp;
 using Messaging.ModelLibrary.WebSocket;
-using Messaging.ModelLibrary.Grpc;
+using Messaging.ModelLibrary.ZeroMQ;
 using MessagingApp.WPF.ViewModels;
+using Microsoft.Win32;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Input;
-using Microsoft.Win32;
-using System.IO;
 using System.Windows.Threading;
-using Messaging.ModelLibrary.Mqtt;
 using ClientInfo = Messaging.ModelLibrary.ClientInfo;
 using ErrorEventArgs = Messaging.ModelLibrary.ErrorEventArgs;
 using MessagingService = Messaging.ModelLibrary.Abstract;
@@ -40,7 +41,7 @@ public class MainViewModel : INotifyPropertyChanged
     // Transport type
     private TransportType _selectedTransportType = TransportType.NamedPipe;
 
-    // Transport settings (keeping existing ones)
+    // Transport settings (existing ones)
     private string _pipeName = "GenericMessagingApp";
     private string _serverName = ".";
     private string _tcpHost = "localhost";
@@ -66,7 +67,7 @@ public class MainViewModel : INotifyPropertyChanged
     private bool _rtpEnableMulticast;
     private string _rtpMulticastAddress = "224.1.1.1";
 
-
+    // MQTT settings
     private string _mqttHost = "localhost";
     private int _mqttPort = 1883;
     private string _mqttClientId = Environment.UserName;
@@ -76,9 +77,18 @@ public class MainViewModel : INotifyPropertyChanged
     private int _mqttTlsPort = 8883;
     private string _mqttWebSocketPath = string.Empty;
     private bool _mqttCleanSession = true;
-    private int _mqttKeepAlive = 15;
+    private int _mqttKeepAliveSeconds = 15;
     private bool _mqttAutoReconnect = true;
     private int _mqttAutoReconnectDelay = 5;
+    private string _mqttWillTopic = string.Empty;
+    private string _mqttWillMessage = string.Empty;
+
+    // ZeroMQ settings
+    private string _zeroMqHost = "localhost";
+    private int _zeroMqRouterPort = 5555;
+    private int _zeroMqPublisherPort = 5556;
+    private int _zeroMqSendTimeout = 5000;
+    private int _zeroMqReceiveTimeout = 5000;
 
     public MainViewModel()
     {
@@ -103,7 +113,8 @@ public class MainViewModel : INotifyPropertyChanged
             TransportType.SignalR,
             TransportType.gRPC,
             TransportType.Rtp,
-            TransportType.Mqtt
+            TransportType.Mqtt,
+            TransportType.ZeroMQ
         };
 
         MessagePriorities = new ObservableCollection<MessagePriority>
@@ -144,6 +155,7 @@ public class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<TransportType> TransportTypes { get; }
     public ObservableCollection<MessagePriority> MessagePriorities { get; }
 
+    // Basic properties
     public string MessageText
     {
         get => _messageText;
@@ -256,10 +268,11 @@ public class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsGrpcSelected));
             OnPropertyChanged(nameof(IsRtpSelected));
             OnPropertyChanged(nameof(IsMqttSelected));
+            OnPropertyChanged(nameof(IsZeroMqSelected));
         }
     }
 
-    // Transport configuration properties (keeping existing ones)
+    // Transport selection properties
     public bool IsNamedPipeSelected => SelectedTransportType == TransportType.NamedPipe;
     public bool IsTcpSelected => SelectedTransportType == TransportType.Tcp;
     public bool IsUdpSelected => SelectedTransportType == TransportType.Udp;
@@ -267,9 +280,10 @@ public class MainViewModel : INotifyPropertyChanged
     public bool IsSignalRSelected => SelectedTransportType == TransportType.SignalR;
     public bool IsGrpcSelected => SelectedTransportType == TransportType.gRPC;
     public bool IsRtpSelected => SelectedTransportType == TransportType.Rtp;
-
     public bool IsMqttSelected => SelectedTransportType == TransportType.Mqtt;
+    public bool IsZeroMqSelected => SelectedTransportType == TransportType.ZeroMQ;
 
+    // Existing transport configuration properties
     public string PipeName { get => _pipeName; set { _pipeName = value; OnPropertyChanged(); } }
     public string ServerName { get => _serverName; set { _serverName = value; OnPropertyChanged(); } }
     public string TcpHost { get => _tcpHost; set { _tcpHost = value; OnPropertyChanged(); } }
@@ -295,8 +309,7 @@ public class MainViewModel : INotifyPropertyChanged
     public bool RtpEnableMulticast { get => _rtpEnableMulticast; set { _rtpEnableMulticast = value; OnPropertyChanged(); } }
     public string RtpMulticastAddress { get => _rtpMulticastAddress; set { _rtpMulticastAddress = value; OnPropertyChanged(); } }
 
-    #region MQTT Configuration Properties
-
+    // MQTT Configuration Properties
     public string MqttHost { get => _mqttHost; set { _mqttHost = value; OnPropertyChanged(); } }
     public int MqttPort { get => _mqttPort; set { _mqttPort = value; OnPropertyChanged(); } }
     public string MqttClientId { get => _mqttClientId; set { _mqttClientId = value; OnPropertyChanged(); } }
@@ -306,10 +319,18 @@ public class MainViewModel : INotifyPropertyChanged
     public int MqttTlsPort { get => _mqttTlsPort; set { _mqttTlsPort = value; OnPropertyChanged(); } }
     public string MqttWebSocketPath { get => _mqttWebSocketPath; set { _mqttWebSocketPath = value; OnPropertyChanged(); } }
     public bool MqttCleanSession { get => _mqttCleanSession; set { _mqttCleanSession = value; OnPropertyChanged(); } }
-    public int MqttKeepAlive { get => _mqttKeepAlive; set { _mqttKeepAlive = value; OnPropertyChanged(); } }
+    public int MqttKeepAliveSeconds { get => _mqttKeepAliveSeconds; set { _mqttKeepAliveSeconds = value; OnPropertyChanged(); } }
     public bool MqttAutoReconnect { get => _mqttAutoReconnect; set { _mqttAutoReconnect = value; OnPropertyChanged(); } }
     public int MqttAutoReconnectDelay { get => _mqttAutoReconnectDelay; set { _mqttAutoReconnectDelay = value; OnPropertyChanged(); } }
-    #endregion
+    public string MqttWillTopic { get => _mqttWillTopic; set { _mqttWillTopic = value; OnPropertyChanged(); } }
+    public string MqttWillMessage { get => _mqttWillMessage; set { _mqttWillMessage = value; OnPropertyChanged(); } }
+
+    // ZeroMQ Configuration Properties
+    public string ZeroMqHost { get => _zeroMqHost; set { _zeroMqHost = value; OnPropertyChanged(); } }
+    public int ZeroMqRouterPort { get => _zeroMqRouterPort; set { _zeroMqRouterPort = value; OnPropertyChanged(); } }
+    public int ZeroMqPublisherPort { get => _zeroMqPublisherPort; set { _zeroMqPublisherPort = value; OnPropertyChanged(); } }
+    public int ZeroMqSendTimeout { get => _zeroMqSendTimeout; set { _zeroMqSendTimeout = value; OnPropertyChanged(); } }
+    public int ZeroMqReceiveTimeout { get => _zeroMqReceiveTimeout; set { _zeroMqReceiveTimeout = value; OnPropertyChanged(); } }
 
     #endregion
 
@@ -347,6 +368,7 @@ public class MainViewModel : INotifyPropertyChanged
                 TransportType.gRPC => new GrpcClient(),
                 TransportType.Rtp => new RtpClient(),
                 TransportType.Mqtt => new MqttMessageClient(),
+                TransportType.ZeroMQ => new ZeroMqClient(),
                 _ => throw new ArgumentException($"Unknown transport type: {SelectedTransportType}")
             };
 
@@ -419,6 +441,7 @@ public class MainViewModel : INotifyPropertyChanged
                 TransportType.gRPC => new GrpcTransport(GrpcHost, GrpcPort),
                 TransportType.Rtp => new RtpTransport(RtpPort, System.Net.IPAddress.Parse(RtpHost)),
                 TransportType.Mqtt => new MqttTransport(),
+                TransportType.ZeroMQ => new ZeroMqTransport(),
                 _ => throw new ArgumentException($"Unknown transport type: {SelectedTransportType}")
             };
 
@@ -1053,10 +1076,27 @@ public class MainViewModel : INotifyPropertyChanged
             },
             TransportType.Mqtt => new Dictionary<string, object>
             {
-                ["Host"] = TcpHost,
-                ["Port"] = TcpPort,
-                ["ClientId"] = ClientName,
-                ["Timeout"] = 5000
+                ["Host"] = MqttHost,
+                ["Port"] = MqttPort,
+                ["ClientName"] = MqttClientId,
+                ["Username"] = MqttUsername,
+                ["Password"] = MqttPassword,
+                ["UseTls"] = MqttUseTls,
+                ["WebSocketPath"] = MqttWebSocketPath,
+                ["KeepAlivePeriod"] = TimeSpan.FromSeconds(MqttKeepAliveSeconds),
+                ["CleanSession"] = MqttCleanSession,
+                ["AutoReconnectDelay"] = TimeSpan.FromSeconds(MqttAutoReconnectDelay),
+                ["WillTopic"] = MqttWillTopic,
+                ["WillMessage"] = string.IsNullOrEmpty(MqttWillMessage) ? $"CLIENT_DISCONNECTED:{ClientName}" : MqttWillMessage
+            },
+            TransportType.ZeroMQ => new Dictionary<string, object>
+            {
+                ["Host"] = ZeroMqHost,
+                ["RouterPort"] = ZeroMqRouterPort,
+                ["PublisherPort"] = ZeroMqPublisherPort,
+                ["ClientName"] = ClientName,
+                ["SendTimeout"] = ZeroMqSendTimeout,
+                ["ReceiveTimeout"] = ZeroMqReceiveTimeout
             },
             _ => new Dictionary<string, object>()
         };
@@ -1111,11 +1151,22 @@ public class MainViewModel : INotifyPropertyChanged
             },
             TransportType.Mqtt => new Dictionary<string, object>
             {
-                ["Host"] = TcpHost,
-                ["Port"] = TcpPort,
-                ["ClientId"] = ClientName,
-                ["EnableTls"] = false,
-                ["AutoReconnectDelay"] = TimeSpan.FromSeconds(5)
+                ["Host"] = MqttHost,
+                ["Port"] = MqttPort,
+                ["TlsPort"] = MqttTlsPort,
+                ["EnableTls"] = MqttUseTls,
+                ["Username"] = MqttUsername,
+                ["Password"] = MqttPassword,
+                ["EnableRetainedMessages"] = true,
+                ["MaxPendingMessages"] = 250
+            },
+            TransportType.ZeroMQ => new Dictionary<string, object>
+            {
+                ["Host"] = ZeroMqHost,
+                ["RouterPort"] = ZeroMqRouterPort,
+                ["PublisherPort"] = ZeroMqPublisherPort,
+                ["SendTimeout"] = ZeroMqSendTimeout,
+                ["ReceiveTimeout"] = ZeroMqReceiveTimeout
             },
             _ => new Dictionary<string, object>()
         };
@@ -1135,6 +1186,7 @@ public class MainViewModel : INotifyPropertyChanged
             TransportType.SignalR => $"SignalR server on {(SignalRUseHttps ? "https" : "http")}://{SignalRHost}:{SignalRPort}{SignalRHubPath}",
             TransportType.gRPC => $"gRPC server on {(GrpcUseHttps ? "https" : "http")}://{GrpcHost}:{GrpcPort}",
             TransportType.Rtp => $"RTP server on {RtpHost}:{RtpPort}" + (RtpEnableMulticast ? $" (MC: {RtpMulticastAddress})" : ""),
+            TransportType.ZeroMQ => $"ZeroMQ server on {ZeroMqHost} (Router:{ZeroMqRouterPort}, Pub:{ZeroMqPublisherPort})",
             _ => $"Server running on {SelectedTransportType}"
         };
     }
