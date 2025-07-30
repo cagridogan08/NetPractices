@@ -15,11 +15,10 @@ namespace Messaging.ModelLibrary.Grpc;
 /// <summary>
 /// Enhanced gRPC transport with comprehensive client-to-client messaging support
 /// </summary>
-public class GrpcTransport : MessageTransportBase
+public class GrpcTransport(string address = "localhost", int port = 5000) : MessageTransportBase
 {
     #region Fields
-    private readonly string _address;
-    private readonly int _port;
+
     private readonly ConcurrentDictionary<string, GrpcClientContext> _clientStreams = new();
     private readonly ConcurrentDictionary<string, HashSet<string>> _groups = new();
     private readonly ConcurrentDictionary<string, HashSet<string>> _clientGroups = new();
@@ -36,11 +35,7 @@ public class GrpcTransport : MessageTransportBase
     #endregion
 
     #region Constructor
-    public GrpcTransport(string address = "localhost", int port = 5000)
-    {
-        _address = address;
-        _port = port;
-    }
+
     #endregion
 
     #region Transport Implementation
@@ -50,8 +45,8 @@ public class GrpcTransport : MessageTransportBase
         {
             await StopAsync();
 
-            var address = configuration?.GetValueOrDefault("Address", _address) as string ?? _address;
-            var port = configuration?.GetValueOrDefault("Port", _port) as int? ?? _port;
+            var address1 = configuration?.GetValueOrDefault("Address", address) as string ?? address;
+            var port1 = configuration?.GetValueOrDefault("Port", port) as int? ?? port;
             var enableHttps = configuration?.GetValueOrDefault("EnableHttps", false) as bool? ?? false;
             var certPath = configuration?.GetValueOrDefault("CertificatePath") as string;
             var certPassword = configuration?.GetValueOrDefault("CertificatePassword") as string;
@@ -116,13 +111,13 @@ public class GrpcTransport : MessageTransportBase
               });
           });
 
-          var url = enableHttps ? $"https://{address}:{port}" : $"http://{address}:{port}";
+          var url = enableHttps ? $"https://{address1}:{port1}" : $"http://{address1}:{port1}";
           webBuilder.UseUrls(url);
 
           // Configure Kestrel properly for gRPC
           webBuilder.UseKestrel(options =>
           {
-              options.ListenAnyIP(port, listenOptions =>
+              options.ListenAnyIP(port1, listenOptions =>
               {
                   if (enableHttps && !string.IsNullOrEmpty(certPath))
                   {
@@ -136,7 +131,7 @@ public class GrpcTransport : MessageTransportBase
               // For development/testing, also listen on HTTP/1.1 for health checks
               if (!enableHttps)
               {
-                  options.ListenAnyIP(port + 1, listenOptions =>
+                  options.ListenAnyIP(port1 + 1, listenOptions =>
                   {
                       listenOptions.Protocols = HttpProtocols.Http1;
                   });

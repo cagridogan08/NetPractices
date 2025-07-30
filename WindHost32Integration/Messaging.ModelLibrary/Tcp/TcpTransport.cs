@@ -173,7 +173,7 @@ public class TcpTransport : MessageTransportBase
         if (sender is TcpClientConnection connection)
         {
             // Register client if this is a registration message
-            if (e.Message.Type == MessageType.System && e.Message.Content == "CLIENT_REGISTER")
+            if (e.Message is { Type: MessageType.System, Content: "CLIENT_REGISTER" })
             {
                 RegisterClient(e.Message.Sender, e.Message.Sender, connection);
                 return;

@@ -1,13 +1,7 @@
 ﻿namespace Messaging.ModelLibrary;
 
-public class ClientDiscoveryEventArgs : EventArgs
+public class ClientDiscoveryEventArgs(ClientInfo client, bool isOnline) : EventArgs
 {
-    public ClientInfo Client { get; }
-    public bool IsOnline { get; }
-
-    public ClientDiscoveryEventArgs(ClientInfo client, bool isOnline)
-    {
-        Client = client;
-        IsOnline = isOnline;
-    }
+    public ClientInfo Client { get; } = client;
+    public bool IsOnline { get; } = isOnline;
 }

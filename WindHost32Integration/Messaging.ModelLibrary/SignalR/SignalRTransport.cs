@@ -595,25 +595,17 @@ public class SignalRTransport(string address = "localhost", int port = 5003, str
 /// <summary>
 /// Enhanced SignalR Hub implementation with comprehensive messaging features
 /// </summary>
-public class EnhancedMessagingHub : Hub
+public class EnhancedMessagingHub(SignalRTransport transport, ILogger<EnhancedMessagingHub> logger)
+    : Hub
 {
-    private readonly SignalRTransport _transport;
-    private readonly ILogger<EnhancedMessagingHub> _logger;
-
-    public EnhancedMessagingHub(SignalRTransport transport, ILogger<EnhancedMessagingHub> logger)
-    {
-        _transport = transport;
-        _logger = logger;
-    }
-
     #region Connection Management
     public async Task JoinAsync(string userName)
     {
         try
         {
-            _logger.LogInformation("User {UserName} joining with connection {ConnectionId}", userName, Context.ConnectionId);
+            logger.LogInformation("User {UserName} joining with connection {ConnectionId}", userName, Context.ConnectionId);
 
-            _transport.AddConnection(Context.ConnectionId, userName, Context);
+            transport.AddConnection(Context.ConnectionId, userName, Context);
 
             // Send welcome message
             await Clients.Caller.SendAsync("SystemMessage", $"Welcome {userName}! You are now connected to the messaging server.");
@@ -622,13 +614,13 @@ public class EnhancedMessagingHub : Hub
             await Clients.Others.SendAsync("UserConnected", Context.ConnectionId, userName);
 
             // Send current online users list
-            var onlineUsers = _transport.GetOnlineClients().Select(c => new { c.ConnectionInfo.Id, c.ConnectionInfo.Name }).ToList();
+            var onlineUsers = transport.GetOnlineClients().Select(c => new { c.ConnectionInfo.Id, c.ConnectionInfo.Name }).ToList();
             await Clients.Caller.SendAsync("OnlineUsersList", onlineUsers);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in JoinAsync for user {UserName}", userName);
-            _transport.OnError($"Join error: {ex.Message}", Context.ConnectionId);
+            logger.LogError(ex, "Error in JoinAsync for user {UserName}", userName);
+            transport.OnError($"Join error: {ex.Message}", Context.ConnectionId);
         }
     }
 
@@ -636,17 +628,17 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            _logger.LogInformation("User {UserName} leaving with connection {ConnectionId}", userName, Context.ConnectionId);
+            logger.LogInformation("User {UserName} leaving with connection {ConnectionId}", userName, Context.ConnectionId);
 
-            _transport.RemoveConnection(Context.ConnectionId);
+            transport.RemoveConnection(Context.ConnectionId);
 
             // Notify other clients
             await Clients.Others.SendAsync("UserDisconnected", Context.ConnectionId, userName);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in LeaveAsync for user {UserName}", userName);
-            _transport.OnError($"Leave error: {ex.Message}", Context.ConnectionId);
+            logger.LogError(ex, "Error in LeaveAsync for user {UserName}", userName);
+            transport.OnError($"Leave error: {ex.Message}", Context.ConnectionId);
         }
     }
     #endregion
@@ -656,12 +648,12 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            _logger.LogDebug("Received message from {Sender} to {Receiver}", message.Sender, message.Receiver);
+            logger.LogDebug("Received message from {Sender} to {Receiver}", message.Sender, message.Receiver);
 
             // Update message sender if not set
             if (string.IsNullOrEmpty(message.Sender))
             {
-                var clientInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+                var clientInfo = transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
                 message.Sender = clientInfo?.ConnectionInfo.Name ?? Context.UserIdentifier ?? Context.ConnectionId;
             }
 
@@ -674,7 +666,7 @@ public class EnhancedMessagingHub : Hub
             else
             {
                 // Direct message - find target client
-                var targetClient = _transport.GetOnlineClients().FirstOrDefault(c => c.ConnectionInfo.Name == message.Receiver);
+                var targetClient = transport.GetOnlineClients().FirstOrDefault(c => c.ConnectionInfo.Name == message.Receiver);
                 if (targetClient != null)
                 {
                     await Clients.Client(targetClient.SignalRConnectionId).SendAsync("ReceiveMessage", message);
@@ -690,12 +682,12 @@ public class EnhancedMessagingHub : Hub
             }
 
             // Notify transport for processing
-            _transport.OnMessageReceived(message, Context.ConnectionId);
+            transport.OnMessageReceived(message, Context.ConnectionId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in SendMessageAsync");
-            _transport.OnError($"Send message error: {ex.Message}", Context.ConnectionId);
+            logger.LogError(ex, "Error in SendMessageAsync");
+            transport.OnError($"Send message error: {ex.Message}", Context.ConnectionId);
             await Clients.Caller.SendAsync("MessageError", message?.Id ?? "unknown", ex.Message);
         }
     }
@@ -704,7 +696,7 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderInfo = transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
             var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
 
             var message = new Message
@@ -720,7 +712,7 @@ public class EnhancedMessagingHub : Hub
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in SendDirectMessageAsync");
+            logger.LogError(ex, "Error in SendDirectMessageAsync");
             await Clients.Caller.SendAsync("MessageError", "direct_message", ex.Message);
         }
     }
@@ -729,7 +721,7 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderInfo = transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
             var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
 
             var message = new Message
@@ -745,7 +737,7 @@ public class EnhancedMessagingHub : Hub
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in BroadcastMessageAsync");
+            logger.LogError(ex, "Error in BroadcastMessageAsync");
             await Clients.Caller.SendAsync("MessageError", "broadcast", ex.Message);
         }
     }
@@ -756,17 +748,17 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderInfo = transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
             var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
 
-            var success = await _transport.CreateGroupAsync(groupName, senderName);
+            var success = await transport.CreateGroupAsync(groupName, senderName);
 
             if (success)
             {
-                await _transport.JoinGroupAsync(groupName, senderName, Context.ConnectionId);
+                await transport.JoinGroupAsync(groupName, senderName, Context.ConnectionId);
                 await Clients.Caller.SendAsync("GroupCreated", groupName);
 
-                _logger.LogInformation("Group {GroupName} created by {UserName}", groupName, senderName);
+                logger.LogInformation("Group {GroupName} created by {UserName}", groupName, senderName);
             }
             else
             {
@@ -775,7 +767,7 @@ public class EnhancedMessagingHub : Hub
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error creating group {GroupName}", groupName);
+            logger.LogError(ex, "Error creating group {GroupName}", groupName);
             await Clients.Caller.SendAsync("GroupError", groupName, ex.Message);
         }
     }
@@ -784,10 +776,10 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderInfo = transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
             var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
 
-            var success = await _transport.JoinGroupAsync(groupName, senderName, Context.ConnectionId);
+            var success = await transport.JoinGroupAsync(groupName, senderName, Context.ConnectionId);
 
             if (success)
             {
@@ -795,10 +787,10 @@ public class EnhancedMessagingHub : Hub
                 await Clients.Group(groupName).SendAsync("UserJoinedGroup", senderName, groupName);
 
                 // Send group member list
-                var members = _transport.GetGroupMembers(groupName);
+                var members = transport.GetGroupMembers(groupName);
                 await Clients.Caller.SendAsync("GroupMembers", groupName, members);
 
-                _logger.LogInformation("User {UserName} joined group {GroupName}", senderName, groupName);
+                logger.LogInformation("User {UserName} joined group {GroupName}", senderName, groupName);
             }
             else
             {
@@ -807,7 +799,7 @@ public class EnhancedMessagingHub : Hub
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error joining group {GroupName}", groupName);
+            logger.LogError(ex, "Error joining group {GroupName}", groupName);
             await Clients.Caller.SendAsync("GroupError", groupName, ex.Message);
         }
     }
@@ -816,17 +808,17 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderInfo = transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
             var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
 
-            var success = await _transport.LeaveGroupAsync(groupName, senderName, Context.ConnectionId);
+            var success = await transport.LeaveGroupAsync(groupName, senderName, Context.ConnectionId);
 
             if (success)
             {
                 await Clients.Caller.SendAsync("GroupLeft", groupName);
                 await Clients.Group(groupName).SendAsync("UserLeftGroup", senderName, groupName);
 
-                _logger.LogInformation("User {UserName} left group {GroupName}", senderName, groupName);
+                logger.LogInformation("User {UserName} left group {GroupName}", senderName, groupName);
             }
             else
             {
@@ -835,7 +827,7 @@ public class EnhancedMessagingHub : Hub
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error leaving group {GroupName}", groupName);
+            logger.LogError(ex, "Error leaving group {GroupName}", groupName);
             await Clients.Caller.SendAsync("GroupError", groupName, ex.Message);
         }
     }
@@ -844,7 +836,7 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            var senderInfo = _transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
+            var senderInfo = transport.GetOnlineClients().FirstOrDefault(c => c.SignalRConnectionId == Context.ConnectionId);
             var senderName = senderInfo?.ConnectionInfo.Name ?? "Unknown";
 
             var message = new Message
@@ -856,7 +848,7 @@ public class EnhancedMessagingHub : Hub
                 Timestamp = DateTime.UtcNow
             };
 
-            var success = await _transport.SendGroupMessageAsync(groupName, message);
+            var success = await transport.SendGroupMessageAsync(groupName, message);
 
             if (success)
             {
@@ -869,7 +861,7 @@ public class EnhancedMessagingHub : Hub
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error sending group message to {GroupName}", groupName);
+            logger.LogError(ex, "Error sending group message to {GroupName}", groupName);
             await Clients.Caller.SendAsync("GroupError", groupName, ex.Message);
         }
     }
@@ -878,12 +870,12 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            var members = _transport.GetGroupMembers(groupName);
+            var members = transport.GetGroupMembers(groupName);
             await Clients.Caller.SendAsync("GroupMembers", groupName, members);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting group members for {GroupName}", groupName);
+            logger.LogError(ex, "Error getting group members for {GroupName}", groupName);
             await Clients.Caller.SendAsync("GroupError", groupName, ex.Message);
         }
     }
@@ -894,19 +886,19 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            var onlineUsers = _transport.GetOnlineClients().Select(c => new
+            var onlineUsers = transport.GetOnlineClients().Select(c => new
             {
                 c.ConnectionInfo.Id,
                 c.ConnectionInfo.Name,
                 c.ConnectionInfo.ConnectedAt,
-                Groups = _transport.GetClientGroups(c.ConnectionInfo.Name)
+                Groups = transport.GetClientGroups(c.ConnectionInfo.Name)
             }).ToList();
 
             await Clients.Caller.SendAsync("OnlineUsersList", onlineUsers);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting online users");
+            logger.LogError(ex, "Error getting online users");
             await Clients.Caller.SendAsync("SystemError", "Failed to get online users");
         }
     }
@@ -915,12 +907,12 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            var stats = _transport.GetStatistics();
+            var stats = transport.GetStatistics();
             await Clients.Caller.SendAsync("ServerStatus", stats);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting server status");
+            logger.LogError(ex, "Error getting server status");
             await Clients.Caller.SendAsync("SystemError", "Failed to get server status");
         }
     }
@@ -933,7 +925,7 @@ public class EnhancedMessagingHub : Hub
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in PingAsync");
+            logger.LogError(ex, "Error in PingAsync");
         }
     }
     #endregion
@@ -941,7 +933,7 @@ public class EnhancedMessagingHub : Hub
     #region Hub Events
     public override async Task OnConnectedAsync()
     {
-        _logger.LogInformation("New connection: {ConnectionId}", Context.ConnectionId);
+        logger.LogInformation("New connection: {ConnectionId}", Context.ConnectionId);
         await base.OnConnectedAsync();
     }
 
@@ -949,20 +941,20 @@ public class EnhancedMessagingHub : Hub
     {
         try
         {
-            _logger.LogInformation("Connection disconnected: {ConnectionId}, Exception: {Exception}",
+            logger.LogInformation("Connection disconnected: {ConnectionId}, Exception: {Exception}",
                 Context.ConnectionId, exception?.Message);
 
-            _transport.RemoveConnection(Context.ConnectionId);
+            transport.RemoveConnection(Context.ConnectionId);
 
             if (exception != null)
             {
-                _transport.OnError($"Disconnected with error: {exception.Message}", Context.ConnectionId);
+                transport.OnError($"Disconnected with error: {exception.Message}", Context.ConnectionId);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in OnDisconnectedAsync");
-            _transport.OnError($"Disconnect handling error: {ex.Message}", Context.ConnectionId);
+            logger.LogError(ex, "Error in OnDisconnectedAsync");
+            transport.OnError($"Disconnect handling error: {ex.Message}", Context.ConnectionId);
         }
 
         await base.OnDisconnectedAsync(exception);
@@ -973,19 +965,15 @@ public class EnhancedMessagingHub : Hub
 /// <summary>
 /// Enhanced SignalR client information container
 /// </summary>
-internal class EnhancedSignalRClientInfo
+internal class EnhancedSignalRClientInfo(
+    ConnectionInfo connectionInfo,
+    string signalRConnectionId,
+    HubCallerContext context)
 {
-    public ConnectionInfo ConnectionInfo { get; }
-    public string SignalRConnectionId { get; }
-    public HubCallerContext Context { get; }
+    public ConnectionInfo ConnectionInfo { get; } = connectionInfo;
+    public string SignalRConnectionId { get; } = signalRConnectionId;
+    public HubCallerContext Context { get; } = context;
     public DateTime LastActivity { get; private set; } = DateTime.UtcNow;
-
-    public EnhancedSignalRClientInfo(ConnectionInfo connectionInfo, string signalRConnectionId, HubCallerContext context)
-    {
-        ConnectionInfo = connectionInfo;
-        SignalRConnectionId = signalRConnectionId;
-        Context = context;
-    }
 
     public void UpdateLastActivity()
     {

@@ -223,7 +223,7 @@ public class WebSocketTransport : MessageTransportBase
         if (sender is WebSocketClientConnection connection)
         {
             // Register client if this is a registration message
-            if (e.Message.Type == MessageType.System && e.Message.Content == "CLIENT_REGISTER")
+            if (e.Message is { Type: MessageType.System, Content: "CLIENT_REGISTER" })
             {
                 RegisterClient(e.Message.Sender, e.Message.Sender, connection);
                 return;
@@ -244,43 +244,38 @@ public class WebSocketTransport : MessageTransportBase
     }
 
     #region Enhanced WebSocket Client Connection
-    private class WebSocketClientConnection : IDisposable
+    private class WebSocketClientConnection(
+        System.Net.WebSockets.WebSocket webSocket,
+        string remoteAddress,
+        CancellationToken cancellationToken)
+        : IDisposable
     {
-        private readonly System.Net.WebSockets.WebSocket _webSocket;
-        private readonly CancellationToken _cancellationToken;
         private Task? _readTask;
         private bool _disposed;
 
-        public string RemoteAddress { get; }
+        public string RemoteAddress { get; } = remoteAddress;
 
         public event EventHandler<MessageEventArgs>? MessageReceived;
         public event EventHandler<ConnectionEventArgs>? Disconnected;
         public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
-        public WebSocketClientConnection(System.Net.WebSockets.WebSocket webSocket, string remoteAddress, CancellationToken cancellationToken)
-        {
-            _webSocket = webSocket;
-            _cancellationToken = cancellationToken;
-            RemoteAddress = remoteAddress;
-        }
-
         public void StartReading()
         {
-            _readTask = Task.Run(ReadMessagesAsync, _cancellationToken);
+            _readTask = Task.Run(ReadMessagesAsync, cancellationToken);
         }
 
         public async Task<bool> SendMessageAsync(Message message)
         {
             try
             {
-                if (_disposed || _webSocket.State != WebSocketState.Open)
+                if (_disposed || webSocket.State != WebSocketState.Open)
                     return false;
 
                 var json = JsonSerializer.Serialize(message);
                 var buffer = Encoding.UTF8.GetBytes(json);
                 var segment = new ArraySegment<byte>(buffer);
 
-                await _webSocket.SendAsync(segment, WebSocketMessageType.Text, true, _cancellationToken);
+                await webSocket.SendAsync(segment, WebSocketMessageType.Text, true, cancellationToken);
                 return true;
             }
             catch (Exception ex)
@@ -296,11 +291,11 @@ public class WebSocketTransport : MessageTransportBase
 
             try
             {
-                while (!_cancellationToken.IsCancellationRequested &&
+                while (!cancellationToken.IsCancellationRequested &&
                        !_disposed &&
-                       _webSocket.State == WebSocketState.Open)
+                       webSocket.State == WebSocketState.Open)
                 {
-                    var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cancellationToken);
+                    var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
 
                     if (result.MessageType == WebSocketMessageType.Text)
                     {
@@ -339,7 +334,7 @@ public class WebSocketTransport : MessageTransportBase
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                if (!_cancellationToken.IsCancellationRequested && !_disposed)
+                if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
                     ErrorOccurred?.Invoke(this, new ErrorEventArgs($"Read error: {ex.Message}", ex));
                 }
@@ -367,16 +362,16 @@ public class WebSocketTransport : MessageTransportBase
 
                 try
                 {
-                    if (_webSocket.State == WebSocketState.Open)
+                    if (webSocket.State == WebSocketState.Open)
                     {
-                        _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server shutdown", CancellationToken.None).Wait(1000);
+                        webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server shutdown", CancellationToken.None).Wait(1000);
                     }
                 }
                 catch {/*ignored*/ }
 
                 try
                 {
-                    _webSocket?.Dispose();
+                    webSocket?.Dispose();
                 }
                 catch {/*ignored*/ }
 

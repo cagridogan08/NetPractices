@@ -13,4 +13,5 @@ public enum TransportType
     Rtp,
     Mqtt,
     ZeroMQ,
+    Redis
 }
