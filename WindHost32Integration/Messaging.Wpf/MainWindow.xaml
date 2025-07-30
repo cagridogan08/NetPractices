@@ -91,7 +91,7 @@
                         Grid.Column="3"
                         Margin="5"
                         IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
-                        Text="{Binding ClientName}" />
+                        Text="{Binding ClientName, UpdateSourceTrigger=PropertyChanged}" />
 
                     <!--  Named Pipe Configuration  -->
                     <StackPanel
@@ -513,12 +513,7 @@
                             Grid.Row="1"
                             Margin="21,0,0,0"
                             Orientation="Horizontal">
-                            <Label VerticalAlignment="Center" Content="Client Name:" />
-                            <TextBox
-                                Width="120"
-                                Margin="5"
-                                IsEnabled="{Binding Path=IsConnected, Converter={StaticResource BooleanInverter}}"
-                                Text="{Binding RedisClientName}" />
+
                             <Label VerticalAlignment="Center" Content="Connect TO:" />
                             <TextBox
                                 Width="60"

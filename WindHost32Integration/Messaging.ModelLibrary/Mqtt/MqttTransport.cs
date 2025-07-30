@@ -200,8 +200,16 @@ public class MqttTransport : MessageTransportBase
         try
         {
             var message = MqttMessageConverter.FromMqttMessage(args.ApplicationMessage);
-            if (message != null && !MqttTopicHelper.IsSystemTopic(args.ApplicationMessage.Topic))
+            if (message != null)
             {
+                if (_mqttClients.TryGetValue(args.ClientId, out var senderClient))
+                {
+                    if (message.Sender == senderClient.ClientId && !MqttTopicHelper.IsSystemTopic(args.ApplicationMessage.Topic))
+                    {
+                        return Task.CompletedTask;
+                    }
+                }
+
                 UpdateClientActivity(args.ClientId);
                 HandleReceivedMessage(message, args.ClientId);
             }

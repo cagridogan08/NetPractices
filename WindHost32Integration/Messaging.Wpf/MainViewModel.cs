@@ -96,7 +96,6 @@ public class MainViewModel : INotifyPropertyChanged
     private int _redisPort = 6379;
     private string _redisPassword = string.Empty;
     private int _redisDatabase = 0;
-    private string _redisClientName = Environment.UserName;
     private int _redisConnectTimeout = 5000;
     private int _redisSyncTimeout = 5000;
 
@@ -345,12 +344,11 @@ public class MainViewModel : INotifyPropertyChanged
     public int ZeroMqPublisherPort { get => _zeroMqPublisherPort; set { _zeroMqPublisherPort = value; OnPropertyChanged(); } }
     public int ZeroMqSendTimeout { get => _zeroMqSendTimeout; set { _zeroMqSendTimeout = value; OnPropertyChanged(); } }
     public int ZeroMqReceiveTimeout { get => _zeroMqReceiveTimeout; set { _zeroMqReceiveTimeout = value; OnPropertyChanged(); } }
-
+    // Redis Configuration Properties
     public string RedisHost { get => _redisHost; set { _redisHost = value; OnPropertyChanged(); } }
     public int RedisPort { get => _redisPort; set { _redisPort = value; OnPropertyChanged(); } }
     public string RedisPassword { get => _redisPassword; set { _redisPassword = value; OnPropertyChanged(); } }
     public int RedisDatabase { get => _redisDatabase; set { _redisDatabase = value; OnPropertyChanged(); } }
-    public string RedisClientName { get => _redisClientName; set { _redisClientName = value; OnPropertyChanged(); } }
     public int RedisConnectTimeout { get => _redisConnectTimeout; set { _redisConnectTimeout = value; OnPropertyChanged(); } }
     public int RedisSyncTimeout { get => _redisSyncTimeout; set { _redisSyncTimeout = value; OnPropertyChanged(); } }
 
@@ -409,15 +407,15 @@ public class MainViewModel : INotifyPropertyChanged
                     Timestamp = DateTime.UtcNow
                 });
 
-                // Start periodic refresh of online clients
-                _ = Task.Run(async () =>
-                {
-                    while (IsConnected)
-                    {
-                        await RefreshOnlineClientsAsync();
-                        await Task.Delay(5000); // Refresh every 5 seconds
-                    }
-                });
+                //// Start periodic refresh of online clients
+                //_ = Task.Run(async () =>
+                //{
+                //    while (IsConnected)
+                //    {
+                //        await RefreshOnlineClientsAsync();
+                //        await Task.Delay(5000); // Refresh every 5 seconds
+                //    }
+                //});
             }
             else
             {
@@ -1128,7 +1126,7 @@ public class MainViewModel : INotifyPropertyChanged
                 ["Port"] = RedisPort,
                 ["Password"] = string.IsNullOrEmpty(RedisPassword) ? null : RedisPassword,
                 ["Database"] = RedisDatabase,
-                ["ClientName"] = RedisClientName,
+                ["ClientName"] = ClientName,
                 ["ConnectTimeout"] = RedisConnectTimeout,
                 ["SyncTimeout"] = RedisSyncTimeout
             },
@@ -1208,7 +1206,7 @@ public class MainViewModel : INotifyPropertyChanged
                 ["Port"] = RedisPort,
                 ["Password"] = string.IsNullOrEmpty(RedisPassword) ? null : RedisPassword,
                 ["Database"] = RedisDatabase,
-                ["ClientName"] = RedisClientName,
+                ["ClientName"] = ClientName,
                 ["ConnectTimeout"] = RedisConnectTimeout,
                 ["SyncTimeout"] = RedisSyncTimeout
             },

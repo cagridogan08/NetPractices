@@ -1,6 +1,7 @@
 ﻿using Messaging.ModelLibrary.Abstract;
 using StackExchange.Redis;
 using System.Collections.Concurrent;
+using System.ServiceModel.Channels;
 using System.Text.Json;
 
 namespace Messaging.ModelLibrary.Redis;
@@ -61,7 +62,14 @@ public class RedisTransport : MessageTransportBase
             _database = _redis.GetDatabase(_config.Database);
             _subscriber = _redis.GetSubscriber();
 
+            // Subscribe to system messages
             await _subscriber.SubscribeAsync(new RedisChannel(_systemChannel, RedisChannel.PatternMode.Auto), OnSystemMessageReceived);
+
+            // FIX: Subscribe to broadcast channel for regular messages
+            await _subscriber.SubscribeAsync(new RedisChannel(_broadcastChannel, RedisChannel.PatternMode.Auto), OnBroadcastMessageReceived);
+
+            // FIX: Subscribe to direct message pattern for client-specific messages
+            await _subscriber.SubscribeAsync(new RedisChannel($"{_clientChannelPrefix}*", RedisChannel.PatternMode.Pattern), OnDirectMessageReceived);
             IsRunning = true;
             return true;
         }
@@ -72,6 +80,9 @@ public class RedisTransport : MessageTransportBase
 
         return false;
     }
+
+
+
 
     #region RedisMethods
 
@@ -96,6 +107,38 @@ public class RedisTransport : MessageTransportBase
         }
     }
 
+    private async void OnDirectMessageReceived(RedisChannel channel, RedisValue message)
+    {
+        try
+        {
+            if (message.IsNull) return;
+            var messageObj = JsonSerializer.Deserialize<Message>(message);
+            if (messageObj != null && messageObj.Type != MessageType.System)
+            {
+                HandleReceivedMessage(messageObj, messageObj.Sender);
+            }
+        }
+        catch (Exception ex)
+        {
+            OnErrorOccurred(new ErrorEventArgs($"Error processing direct message: {ex.Message}", ex));
+        }
+    }
+    private void OnBroadcastMessageReceived(RedisChannel channel, RedisValue message)
+    {
+        try
+        {
+            if (message.IsNull) return;
+            var messageObj = JsonSerializer.Deserialize<Message>(message);
+            if (messageObj != null)
+            {
+                HandleReceivedMessage(messageObj, messageObj.Sender);
+            }
+        }
+        catch (Exception ex)
+        {
+            OnErrorOccurred(new ErrorEventArgs($"Error processing broadcast message: {ex.Message}", ex));
+        }
+    }
     private async Task RegisterRedisClient(string clientName)
     {
         try
@@ -118,7 +161,7 @@ public class RedisTransport : MessageTransportBase
                 IsActive = true
             };
 
-            RegisterClient(clientName, clientName, clientInfo);
+            RegisterClient(clientName, clientName, connectionInfo);
         }
         catch (Exception ex)
         {

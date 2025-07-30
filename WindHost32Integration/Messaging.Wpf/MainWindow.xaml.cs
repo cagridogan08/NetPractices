@@ -43,14 +43,14 @@ namespace Messaging.Wpf
     // Converter to invert boolean values for UI binding
     public class BooleanInverterConverter : IValueConverter
     {
-        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
         {
-            return value is bool boolValue ? !boolValue : false;
+            return value is false;
         }
 
-        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         {
-            return value is bool boolValue ? !boolValue : true;
+            return value is not true;
         }
     }
 }
@@ -60,19 +60,19 @@ namespace MessagingApp.WPF.ViewModels
     public class RelayCommand : ICommand
     {
         private readonly Action _execute;
-        private readonly Func<bool> _canExecute;
+        private readonly Func<bool>? _canExecute;
 
-        public RelayCommand(Action execute, Func<bool> canExecute = null)
+        public RelayCommand(Action execute, Func<bool>? canExecute = null)
         {
             _execute = execute ?? throw new ArgumentNullException(nameof(execute));
             _canExecute = canExecute;
         }
 
-        public bool CanExecute(object parameter) => _canExecute?.Invoke() ?? true;
+        public bool CanExecute(object? parameter) => _canExecute?.Invoke() ?? true;
 
-        public void Execute(object parameter) => _execute();
+        public void Execute(object? parameter) => _execute();
 
-        public event EventHandler CanExecuteChanged;
+        public event EventHandler? CanExecuteChanged;
 
         public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
     }

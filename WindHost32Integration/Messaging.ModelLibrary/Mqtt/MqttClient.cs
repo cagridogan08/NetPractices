@@ -239,9 +239,23 @@ public class MqttMessageClient : MessageClientBase
 
             if (message != null && ConnectionInfo != null)
             {
-                // Don't process our own messages (except system messages)
-                if (message.Sender == ConnectionInfo.Name && message.Type != MessageType.System)
+                // FIX: Better filtering of own messages
+                // Check both sender name and MQTT client ID to prevent echo
+                var isOwnMessage = message.Sender == ConnectionInfo.Name;
+                var isSystemMessage = message.Type == MessageType.System;
+
+                // Don't process our own messages unless they are system messages we need to handle
+                if (isOwnMessage && !isSystemMessage)
+                {
                     return Task.CompletedTask;
+                }
+
+                // Additional check: if this is a direct message to us, but we sent it, ignore it
+                if (isOwnMessage && !string.IsNullOrEmpty(message.Receiver) &&
+                    message.Receiver == ConnectionInfo.Name && message.Type != MessageType.System)
+                {
+                    return Task.CompletedTask;
+                }
 
                 OnMessageReceived(new MessageEventArgs(message, ConnectionInfo));
             }
@@ -377,13 +391,13 @@ public class MqttMessageClient : MessageClientBase
                     .WithTopic(MqttTopics.SystemTopic)
                     .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
                     .Build(),
-                    
+                
                 // Broadcast messages
                 factory.CreateTopicFilterBuilder()
                     .WithTopic(MqttTopics.BroadcastTopic)
                     .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
                     .Build(),
-                    
+                
                 // Direct messages for this client
                 factory.CreateTopicFilterBuilder()
                     .WithTopic(MqttTopicHelper.GetDirectMessageTopic(ConnectionInfo.Name))
@@ -392,6 +406,9 @@ public class MqttMessageClient : MessageClientBase
             };
 
             await _mqttClient.SubscribeAsync(subscriptions);
+
+            // FIX: Add a small delay to ensure subscriptions are processed
+            await Task.Delay(100);
         }
         catch (Exception ex)
         {

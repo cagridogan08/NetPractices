@@ -52,7 +52,7 @@ public class RedisClient : MessageClientBase
 
             var configOptions = ConfigurationOptions.Parse(_config.ConnectionString);
             configOptions.AbortOnConnectFail = false;
-
+            _config.ClientName = clientName;
             _redis = await ConnectionMultiplexer.ConnectAsync(configOptions);
             _database = _redis.GetDatabase();
             _subscriber = _redis.GetSubscriber();
@@ -146,20 +146,39 @@ public class RedisClient : MessageClientBase
                 OnErrorOccurred(new ErrorEventArgs("Redis client is not connected or initialized."));
                 return false;
             }
+
             if (string.IsNullOrEmpty(message.Sender))
                 message.Sender = ConnectionInfo?.Name ?? "Unknown";
 
-            var json = System.Text.Json.JsonSerializer.Serialize(message);
-            var channel = message.Type == MessageType.System ? _systemChannel :
-                string.IsNullOrEmpty(message.Receiver) || message.Receiver == "*" ? _broadcastChannel :
-                $"{_clientChannelPrefix}{message.Receiver}";
-            var subscribers = await _subscriber.PublishAsync(channel, json);
+            var json = JsonSerializer.Serialize(message);
 
+            // FIX: Better channel determination logic
+            string channel;
+            if (message.Type == MessageType.System)
+            {
+                channel = _systemChannel;
+            }
+            else if (string.IsNullOrEmpty(message.Receiver) || message.Receiver == "*")
+            {
+                channel = _broadcastChannel;
+            }
+            else if (message.Receiver.StartsWith("group:"))
+            {
+                var groupName = message.Receiver.Substring(6);
+                channel = $"messaging:group:{groupName}";
+            }
+            else
+            {
+                // Direct message to specific client
+                channel = $"{_clientChannelPrefix}{message.Receiver}";
+            }
+
+            var subscribers = await _subscriber.PublishAsync(channel, json);
             return subscribers >= 0;
         }
         catch (Exception e)
         {
-            OnErrorOccurred(new ErrorEventArgs($"Redis send message error:{e.Message}", e));
+            OnErrorOccurred(new ErrorEventArgs($"Redis send message error: {e.Message}", e));
             return false;
         }
     }
